@@ -17,6 +17,7 @@ It only performs face detection, registration, and recognition matching.
 """
 
 import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 import re
 import io
 import base64

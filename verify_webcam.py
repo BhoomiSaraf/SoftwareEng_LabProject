@@ -11,6 +11,8 @@ Controls in the webcam window:
     'q' - Quit verification
 """
 
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 import sys
 import cv2
 from face_recognition_service import face_service
