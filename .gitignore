@@ -1,21 +1,60 @@
-# Python bytecode and caches
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
 .pytest_cache/
 
-# Local databases and secrets (Rule: Do not commit local database contents or secrets)
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# SQLite databases & local data
 *.db
 *.sqlite
 *.sqlite3
 instance/
-.env
 
-# Virtual environments
-venv/
-env/
-ENV/
+# Biometric and raw face images (DO NOT COMMIT RAW BIOMETRIC DATA)
+data/faces/
+data/raw/
+*.jpg
+*.jpeg
+*.png
+!static/images/*.png
+!static/images/*.jpg
 
-# IDE files
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# IDE and editors
 .vscode/
 .idea/
+*.swp
+*.swo

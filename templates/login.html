@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% block title %}Faculty Login - Smart Attendance System{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center align-items-center min-vh-75 py-4">
+    <div class="col-md-7 col-lg-5 col-xl-4">
+        <div class="card-tech accent-primary p-4 p-sm-5 shadow-lg">
+            <div class="text-center mb-4">
+                <div class="brand-icon-wrapper mx-auto mb-3" style="width: 56px; height: 56px; font-size: 1.8rem;">
+                    <i class="bi bi-person-bounding-box text-primary"></i>
+                </div>
+                <h3 class="fw-bold text-white mb-1">Faculty Portal</h3>
+                <p class="text-muted fs-sm">Sign in to manage classes and start automated biometric sessions</p>
+            </div>
+
+            <form id="loginForm" method="POST" action="{{ url_for('frontend.login') }}">
+                <div class="mb-3">
+                    <label for="username" class="form-label text-muted fs-xs text-uppercase fw-semibold">Faculty Email / Username</label>
+                    <div class="input-group">
+                        <span class="input-group-text bg-dark-card border-subtle text-muted">
+                            <i class="bi bi-envelope"></i>
+                        </span>
+                        <input type="text" class="form-tech-control form-control" id="username" name="username" placeholder="faculty@college.edu" required autocomplete="username" value="faculty@college.edu">
+                    </div>
+                </div>
+
+                <div class="mb-4">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <label for="password" class="form-label text-muted fs-xs text-uppercase fw-semibold mb-0">Password</label>
+                    </div>
+                    <div class="input-group">
+                        <span class="input-group-text bg-dark-card border-subtle text-muted">
+                            <i class="bi bi-shield-lock"></i>
+                        </span>
+                        <input type="password" class="form-tech-control form-control" id="password" name="password" placeholder="••••••••" required autocomplete="current-password" value="faculty123">
+                    </div>
+                </div>
+
+                <button type="submit" id="loginBtn" class="btn btn-primary w-100 py-2 d-flex align-items-center justify-content-center gap-2 rounded-3 shadow-sm">
+                    <i class="bi bi-box-arrow-in-right"></i>
+                    <span>Authenticate &amp; Enter</span>
+                </button>
+            </form>
+
+            <div class="mt-4 pt-3 border-top border-subtle text-center">
+                <p class="text-muted fs-xs mb-2">Lab Project Demo Access:</p>
+                <div class="d-flex justify-content-center gap-2">
+                    <span class="badge bg-dark-card text-muted border border-subtle font-monospace py-1 px-2">faculty@college.edu / faculty123</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('loginForm')?.addEventListener('submit', function() {
+    const btn = document.getElementById('loginBtn');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span> Authenticating...';
+    }
+});
+</script>
+{% endblock %}

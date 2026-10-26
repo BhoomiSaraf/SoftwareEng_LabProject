@@ -1,0 +1,413 @@
+{% extends "base.html" %}
+
+{% block title %}Student Management - Smart Attendance System{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-4">
+    <div>
+        <h2 class="h3 fw-bold mb-1">Student Management</h2>
+        <p class="text-muted fs-sm mb-0">Register students, manage academic profiles, and capture reference face data</p>
+    </div>
+    <div class="d-flex gap-2">
+        <button type="button" class="btn btn-primary d-flex align-items-center gap-2 rounded-3 shadow-sm" data-bs-toggle="modal" data-bs-target="#addStudentModal">
+            <i class="bi bi-person-plus-fill"></i>
+            <span>Register New Student</span>
+        </button>
+    </div>
+</div>
+
+<!-- Search and Filter Bar -->
+<div class="card-tech p-3 mb-4">
+    <div class="row g-2 align-items-center">
+        <div class="col-md-6 col-lg-4">
+            <div class="input-group">
+                <span class="input-group-text bg-dark-card border-subtle text-muted">
+                    <i class="bi bi-search"></i>
+                </span>
+                <input type="text" id="studentSearchInput" class="form-tech-control form-control" placeholder="Search by name, roll no, or email...">
+            </div>
+        </div>
+        <div class="col-md-4 col-lg-3">
+            <select id="faceStatusFilter" class="form-select form-tech-control">
+                <option value="all">All Face Registration Statuses</option>
+                <option value="registered">Face Registered Only</option>
+                <option value="pending">Face Pending Only</option>
+            </select>
+        </div>
+        <div class="col text-md-end text-muted fs-xs">
+            Showing <strong id="studentCount" class="text-white">{{ students|length if students else 0 }}</strong> registered students
+        </div>
+    </div>
+</div>
+
+<!-- Student List Table -->
+<div class="card-tech p-4">
+    <div class="table-responsive">
+        <table class="table table-tech w-100" id="studentsTable">
+            <thead>
+                <tr>
+                    <th>Roll Number</th>
+                    <th>Full Name</th>
+                    <th>Email Address</th>
+                    <th>Face Biometric Status</th>
+                    <th>Courses</th>
+                    <th class="text-end">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% if students %}
+                    {% for student in students %}
+                    <tr class="student-row" data-name="{{ student.name|lower }}" data-roll="{{ student.roll_no|lower }}" data-email="{{ student.email|lower }}" data-face="{{ 'registered' if student.has_face else 'pending' }}">
+                        <td>
+                            <span class="badge bg-dark-card text-primary border border-primary-subtle font-monospace px-2 py-1 fs-xs">
+                                {{ student.roll_no }}
+                            </span>
+                        </td>
+                        <td class="fw-semibold text-white">
+                            <div class="d-flex align-items-center gap-2">
+                                <div class="rounded-circle bg-primary-soft text-primary d-flex align-items-center justify-content-center" style="width: 32px; height: 32px; font-size: 0.85rem;">
+                                    {{ student.name[:2]|upper }}
+                                </div>
+                                <span>{{ student.name }}</span>
+                            </div>
+                        </td>
+                        <td class="text-muted fs-sm">{{ student.email }}</td>
+                        <td>
+                            {% if student.has_face %}
+                            <span class="badge badge-soft-success rounded-pill px-2 py-1 fs-xs">
+                                <i class="bi bi-check-circle-fill me-1"></i> Registered ({{ student.face_samples_count|default(1) }} sample)
+                            </span>
+                            {% else %}
+                            <span class="badge badge-soft-warning rounded-pill px-2 py-1 fs-xs">
+                                <i class="bi bi-exclamation-triangle-fill me-1"></i> Pending Capture
+                            </span>
+                            {% endif %}
+                        </td>
+                        <td class="text-muted fs-xs">
+                            {{ student.course_codes|join(', ') if student.course_codes else 'None' }}
+                        </td>
+                        <td class="text-end">
+                            <button type="button" class="btn btn-sm btn-tech-outline rounded-pill px-3 fs-xs enroll-face-btn" 
+                                    data-id="{{ student.id }}" 
+                                    data-name="{{ student.name }}" 
+                                    data-roll="{{ student.roll_no }}"
+                                    data-has-face="{{ 'true' if student.has_face else 'false' }}">
+                                <i class="bi bi-camera me-1 text-primary"></i> 
+                                {{ 'Update Face' if student.has_face else 'Capture Face' }}
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                {% else %}
+                    <tr>
+                        <td colspan="6" class="text-center py-4 text-muted">
+                            No students registered yet. Click "Register New Student" to get started.
+                        </td>
+                    </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Modal: Register New Student -->
+<div class="modal fade modal-tech" id="addStudentModal" tabindex="-1" aria-labelledby="addStudentModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold" id="addStudentModalLabel">
+                    <i class="bi bi-person-plus text-primary me-2"></i>Register Student
+                </h5>
+                <button type="button" class="btn-close btn-close-white shadow-none" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form id="addStudentForm" action="{{ url_for('frontend.add_student_action') }}" method="POST">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="rollNo" class="form-label text-muted fs-xs text-uppercase fw-semibold">Roll Number / Student ID</label>
+                        <input type="text" class="form-tech-control form-control" id="rollNo" name="roll_no" placeholder="e.g. 21BCE045" required>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="studentName" class="form-label text-muted fs-xs text-uppercase fw-semibold">Full Student Name</label>
+                        <input type="text" class="form-tech-control form-control" id="studentName" name="name" placeholder="e.g. Alex Morgan" required>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="studentEmail" class="form-label text-muted fs-xs text-uppercase fw-semibold">Institutional Email</label>
+                        <input type="email" class="form-tech-control form-control" id="studentEmail" name="email" placeholder="e.g. alex.morgan@college.edu" required>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-tech-outline rounded-pill px-3" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" id="addStudentSubmitBtn" class="btn btn-primary rounded-pill px-4">
+                        Save Student
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Face Enrollment / Capture Modal -->
+<div class="modal fade modal-tech" id="faceEnrollModal" tabindex="-1" aria-labelledby="faceEnrollModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold" id="faceEnrollModalLabel">
+                    <i class="bi bi-person-bounding-box text-primary me-2"></i>Face Biometric Registration
+                </h5>
+                <button type="button" class="btn-close btn-close-white shadow-none" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <div class="d-flex align-items-center justify-content-between p-3 rounded-3 bg-dark-glass border border-subtle">
+                        <div>
+                            <span class="text-muted fs-xs text-uppercase fw-semibold d-block">Target Student</span>
+                            <span class="fw-bold text-white fs-5" id="targetStudentName">Alex Morgan</span>
+                            <span class="badge bg-dark-card text-primary border border-primary-subtle font-monospace ms-2" id="targetStudentRoll">21BCE045</span>
+                        </div>
+                        <div id="targetFaceStatus">
+                            <!-- Injected dynamically -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tabs: Webcam Capture or Photo Upload -->
+                <ul class="nav nav-pills mb-3 gap-2" id="captureTabs" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link active rounded-pill px-3 fs-xs" id="webcam-tab" data-bs-toggle="pill" data-bs-target="#webcamTabPane" type="button" role="tab">
+                            <i class="bi bi-camera-video-fill me-1"></i> Capture via Webcam
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link rounded-pill px-3 fs-xs" id="upload-tab" data-bs-toggle="pill" data-bs-target="#uploadTabPane" type="button" role="tab">
+                            <i class="bi bi-cloud-arrow-up-fill me-1"></i> Upload Image File
+                        </button>
+                    </li>
+                </ul>
+
+                <div class="tab-content" id="captureTabsContent">
+                    <!-- Tab 1: Webcam -->
+                    <div class="tab-pane fade show active" id="webcamTabPane" role="tabpanel">
+                        <div class="camera-container mb-3" style="max-height: 340px;">
+                            <video id="enrollVideo" autoplay playsinline muted></video>
+                            <canvas id="enrollCanvas" class="d-none"></canvas>
+                            <div class="scanner-overlay">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <span class="badge bg-dark-card border border-subtle text-muted fs-xxs">WEBCAM LIVE</span>
+                                </div>
+                                <div class="scan-crosshairs"></div>
+                                <div class="text-center">
+                                    <span class="text-muted fs-xxs bg-dark-card py-1 px-2 rounded-pill border border-subtle">Position face in center frame</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="d-flex justify-content-center gap-2">
+                            <button type="button" id="startEnrollCamBtn" class="btn btn-tech-outline rounded-pill px-3 fs-sm">
+                                <i class="bi bi-camera me-1"></i> Start Camera
+                            </button>
+                            <button type="button" id="snapEnrollCamBtn" class="btn btn-primary rounded-pill px-4 fs-sm" disabled>
+                                <i class="bi bi-record-circle me-1"></i> Capture &amp; Register Reference Face
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Tab 2: Upload -->
+                    <div class="tab-pane fade" id="uploadTabPane" role="tabpanel">
+                        <div class="p-4 border border-dashed rounded-3 text-center border-subtle bg-dark-glass mb-3">
+                            <i class="bi bi-file-earmark-image fs-1 text-primary mb-2 d-block"></i>
+                            <label for="faceImageFile" class="form-label text-white fw-semibold mb-1">Select Reference Portrait Photo</label>
+                            <p class="text-muted fs-xs">JPG, PNG format with clear single-face illumination</p>
+                            <input class="form-control form-tech-control mx-auto mt-2" type="file" id="faceImageFile" accept="image/*" style="max-width: 320px;">
+                        </div>
+                        <div id="imageFilePreviewContainer" class="text-center d-none mb-3">
+                            <img id="imageFilePreview" class="rounded-3 border border-subtle" style="max-height: 200px;" alt="Face Preview">
+                        </div>
+                        <div class="text-center">
+                            <button type="button" id="uploadEnrollBtn" class="btn btn-primary rounded-pill px-4 fs-sm" disabled>
+                                <i class="bi bi-upload me-1"></i> Register Uploaded Face
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="enrollResultMsg" class="mt-3 d-none"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-tech-outline rounded-pill px-3" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Student Search & Filter
+const searchInput = document.getElementById('studentSearchInput');
+const statusFilter = document.getElementById('faceStatusFilter');
+const studentRows = document.querySelectorAll('.student-row');
+const countDisplay = document.getElementById('studentCount');
+
+function filterStudents() {
+    const q = (searchInput?.value || '').toLowerCase().trim();
+    const status = statusFilter?.value || 'all';
+    let visible = 0;
+
+    studentRows.forEach(row => {
+        const name = row.dataset.name || '';
+        const roll = row.dataset.roll || '';
+        const email = row.dataset.email || '';
+        const face = row.dataset.face || '';
+
+        const matchesQuery = !q || name.includes(q) || roll.includes(q) || email.includes(q);
+        const matchesStatus = status === 'all' || face === status;
+
+        if (matchesQuery && matchesStatus) {
+            row.style.display = '';
+            visible++;
+        } else {
+            row.style.display = 'none';
+        }
+    });
+
+    if (countDisplay) countDisplay.textContent = visible;
+}
+
+searchInput?.addEventListener('input', filterStudents);
+statusFilter?.addEventListener('change', filterStudents);
+
+// Face Enrollment Modal Logic
+let currentStudentId = null;
+let enrollStream = null;
+const enrollModal = new bootstrap.Modal(document.getElementById('faceEnrollModal'));
+const enrollVideo = document.getElementById('enrollVideo');
+const enrollCanvas = document.getElementById('enrollCanvas');
+const startCamBtn = document.getElementById('startEnrollCamBtn');
+const snapCamBtn = document.getElementById('snapEnrollCamBtn');
+const uploadBtn = document.getElementById('uploadEnrollBtn');
+const faceFileInput = document.getElementById('faceImageFile');
+const filePreview = document.getElementById('imageFilePreview');
+const filePreviewContainer = document.getElementById('imageFilePreviewContainer');
+const resultMsg = document.getElementById('enrollResultMsg');
+
+document.querySelectorAll('.enroll-face-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        currentStudentId = btn.dataset.id;
+        document.getElementById('targetStudentName').textContent = btn.dataset.name;
+        document.getElementById('targetStudentRoll').textContent = btn.dataset.roll;
+        const hasFace = btn.dataset.hasFace === 'true';
+        
+        document.getElementById('targetFaceStatus').innerHTML = hasFace
+            ? '<span class="badge badge-soft-success rounded-pill px-2 py-1 fs-xs"><i class="bi bi-check-circle-fill me-1"></i> Enrolled</span>'
+            : '<span class="badge badge-soft-warning rounded-pill px-2 py-1 fs-xs"><i class="bi bi-exclamation-triangle-fill me-1"></i> Pending</span>';
+        
+        resultMsg.className = 'mt-3 d-none';
+        enrollModal.show();
+    });
+});
+
+// Stop camera stream when modal hides
+document.getElementById('faceEnrollModal')?.addEventListener('hidden.bs.modal', () => {
+    if (enrollStream) {
+        enrollStream.getTracks().forEach(track => track.stop());
+        enrollStream = null;
+    }
+    if (enrollVideo) enrollVideo.srcObject = null;
+    if (startCamBtn) startCamBtn.disabled = false;
+    if (snapCamBtn) snapCamBtn.disabled = true;
+});
+
+// Start Camera
+startCamBtn?.addEventListener('click', async () => {
+    try {
+        enrollStream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+        enrollVideo.srcObject = enrollStream;
+        startCamBtn.disabled = true;
+        snapCamBtn.disabled = false;
+        showToast('Webcam initialized for face capture', 'info');
+    } catch (err) {
+        console.error('Camera access error:', err);
+        showToast('Camera access denied or unavailable: ' + err.message, 'danger');
+    }
+});
+
+// Snap and Register Face
+snapCamBtn?.addEventListener('click', async () => {
+    if (!enrollVideo || !enrollCanvas || !currentStudentId) return;
+
+    snapCamBtn.disabled = true;
+    snapCamBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Processing Face...';
+
+    enrollCanvas.width = enrollVideo.videoWidth || 640;
+    enrollCanvas.height = enrollVideo.videoHeight || 480;
+    const ctx = enrollCanvas.getContext('2d');
+    ctx.drawImage(enrollVideo, 0, 0, enrollCanvas.width, enrollCanvas.height);
+    const base64Image = enrollCanvas.toDataURL('image/jpeg', 0.9);
+
+    try {
+        const resp = await fetchJson(`/api/students/${currentStudentId}/register-face`, {
+            method: 'POST',
+            body: JSON.stringify({ image: base64Image })
+        });
+
+        resultMsg.className = 'alert alert-success d-flex align-items-center gap-2 mt-3';
+        resultMsg.innerHTML = `<i class="bi bi-check-circle-fill fs-5"></i><div><strong>Success!</strong> ${resp.message || 'Face biometrics registered successfully.'}</div>`;
+        showToast('Face enrolled successfully for student', 'success');
+        
+        setTimeout(() => location.reload(), 1500);
+    } catch (err) {
+        resultMsg.className = 'alert alert-danger d-flex align-items-center gap-2 mt-3';
+        resultMsg.innerHTML = `<i class="bi bi-exclamation-triangle-fill fs-5"></i><div><strong>Registration Failed:</strong> ${err.message}</div>`;
+        showToast(err.message, 'danger');
+        snapCamBtn.disabled = false;
+        snapCamBtn.innerHTML = '<i class="bi bi-record-circle me-1"></i> Capture &amp; Register Reference Face';
+    }
+});
+
+// File upload preview
+faceFileInput?.addEventListener('change', () => {
+    const file = faceFileInput.files[0];
+    if (file) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            filePreview.src = e.target.result;
+            filePreviewContainer.classList.remove('d-none');
+            uploadBtn.disabled = false;
+        };
+        reader.readAsDataURL(file);
+    }
+});
+
+// Submit uploaded file
+uploadBtn?.addEventListener('click', async () => {
+    if (!faceFileInput.files[0] || !currentStudentId) return;
+
+    uploadBtn.disabled = true;
+    uploadBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Uploading...';
+
+    const reader = new FileReader();
+    reader.onload = async () => {
+        try {
+            const resp = await fetchJson(`/api/students/${currentStudentId}/register-face`, {
+                method: 'POST',
+                body: JSON.stringify({ image: reader.result })
+            });
+
+            resultMsg.className = 'alert alert-success d-flex align-items-center gap-2 mt-3';
+            resultMsg.innerHTML = `<i class="bi bi-check-circle-fill fs-5"></i><div><strong>Success!</strong> ${resp.message || 'Face registered successfully.'}</div>`;
+            showToast('Face enrolled successfully', 'success');
+            setTimeout(() => location.reload(), 1500);
+        } catch (err) {
+            resultMsg.className = 'alert alert-danger d-flex align-items-center gap-2 mt-3';
+            resultMsg.innerHTML = `<i class="bi bi-exclamation-triangle-fill fs-5"></i><div><strong>Failed:</strong> ${err.message}</div>`;
+            showToast(err.message, 'danger');
+            uploadBtn.disabled = false;
+            uploadBtn.innerHTML = '<i class="bi bi-upload me-1"></i> Register Uploaded Face';
+        }
+    };
+    reader.readAsDataURL(faceFileInput.files[0]);
+});
+</script>
+{% endblock %}

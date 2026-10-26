@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Smart Attendance System{% endblock %}</title>
+    <!-- Google Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;600;700&display=swap" rel="stylesheet">
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    {% block head_extra %}{% endblock %}
+</head>
+<body class="bg-surface">
+
+    <!-- Top Navigation Bar -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark-glass sticky-top border-bottom border-subtle">
+        <div class="container-fluid px-lg-4">
+            <a class="navbar-brand d-flex align-items-center gap-2" href="{{ url_for('frontend.dashboard') if 'user' in session else url_for('frontend.login') }}">
+                <div class="brand-icon-wrapper">
+                    <i class="bi bi-person-bounding-box text-primary"></i>
+                </div>
+                <div class="brand-text">
+                    <span class="fw-bold tracking-tight text-white">Smart<span class="text-primary">Attendance</span></span>
+                    <span class="badge bg-primary-subtle text-primary border border-primary-subtle ms-2 rounded-pill font-monospace fs-xs">MVP</span>
+                </div>
+            </a>
+
+            <button class="navbar-toggler border-0 shadow-none" type="button" data-bs-toggle="collapse" data-bs-target="#topNav" aria-controls="topNav" aria-expanded="false" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+
+            <div class="collapse navbar-collapse" id="topNav">
+                {% if session.get('user') %}
+                <ul class="navbar-nav me-auto mb-2 mb-lg-0 ms-lg-4 gap-lg-1">
+                    <li class="nav-item">
+                        <a class="nav-link px-3 rounded-2 {% if active_page == 'dashboard' %}active text-white bg-primary-soft{% endif %}" href="{{ url_for('frontend.dashboard') }}">
+                            <i class="bi bi-grid-1x2-fill me-1"></i> Dashboard
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link px-3 rounded-2 {% if active_page == 'students' %}active text-white bg-primary-soft{% endif %}" href="{{ url_for('frontend.students') }}">
+                            <i class="bi bi-people-fill me-1"></i> Students
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link px-3 rounded-2 {% if active_page == 'courses' %}active text-white bg-primary-soft{% endif %}" href="{{ url_for('frontend.courses') }}">
+                            <i class="bi bi-book-half me-1"></i> Courses
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link px-3 rounded-2 {% if active_page == 'reports' %}active text-white bg-primary-soft{% endif %}" href="{{ url_for('frontend.reports') }}">
+                            <i class="bi bi-file-earmark-bar-graph-fill me-1"></i> Reports &amp; Export
+                        </a>
+                    </li>
+                </ul>
+
+                <div class="d-flex align-items-center gap-3">
+                    <div class="user-profile-badge d-flex align-items-center gap-2 py-1 px-3 rounded-pill bg-dark-card border border-subtle">
+                        <i class="bi bi-person-circle text-primary fs-5"></i>
+                        <div class="lh-1 text-start">
+                            <span class="d-block fw-semibold text-white fs-sm">{{ session.get('user', {}).get('name', 'Faculty Member') }}</span>
+                            <span class="text-muted fs-xs text-uppercase">{{ session.get('user', {}).get('role', 'Faculty') }}</span>
+                        </div>
+                    </div>
+                    <a href="{{ url_for('frontend.logout') }}" class="btn btn-outline-danger btn-sm d-flex align-items-center gap-1 rounded-pill px-3">
+                        <i class="bi bi-box-arrow-right"></i> Logout
+                    </a>
+                </div>
+                {% else %}
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item">
+                        <a class="nav-link active text-white" href="{{ url_for('frontend.login') }}">
+                            <i class="bi bi-box-arrow-in-right me-1"></i> Faculty Login
+                        </a>
+                    </li>
+                </ul>
+                {% endif %}
+            </div>
+        </div>
+    </nav>
+
+    <!-- Global Toast Container -->
+    <div class="toast-container position-fixed top-0 end-0 p-3" style="z-index: 1090;" id="toastContainer"></div>
+
+    <!-- Flash Messages Container -->
+    <div class="container-fluid px-lg-4 mt-3">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category if category != 'message' else 'info' }} alert-dismissible fade show border-0 shadow-sm d-flex align-items-center gap-2" role="alert">
+                        <i class="bi bi-info-circle-fill"></i>
+                        <div>{{ message }}</div>
+                        <button type="button" class="btn-close shadow-none" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+    </div>
+
+    <!-- Main Content Block -->
+    <main class="container-fluid px-lg-4 py-4 min-vh-80">
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer border-top border-subtle py-3 text-center text-muted fs-xs bg-dark-glass mt-auto">
+        <div class="container-fluid px-lg-4 d-flex flex-column flex-sm-row justify-content-between align-items-center gap-2">
+            <div>
+                &copy; 2026 <strong>Smart Attendance System</strong> &mdash; Software Engineering Lab Project MVP
+            </div>
+            <div class="d-flex align-items-center gap-3">
+                <span class="badge bg-success-subtle text-success border border-success-subtle rounded-pill">
+                    <i class="bi bi-circle-fill fs-xxs me-1"></i> Facial Recognition Module Ready
+                </span>
+                <span>Branch: <code class="text-primary">feature/frontend-reports</code></span>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Bootstrap 5 JS Bundle with Popper -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Common JS Utilities -->
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

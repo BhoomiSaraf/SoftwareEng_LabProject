@@ -1,0 +1,245 @@
+{% extends "base.html" %}
+
+{% block title %}Attendance Reports & CSV Export - Smart Attendance System{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-4">
+    <div>
+        <h2 class="h3 fw-bold mb-1">Attendance Reports &amp; Analytics</h2>
+        <p class="text-muted fs-sm mb-0">Evaluate student attendance compliance, review session logs, and export official CSV records</p>
+    </div>
+    <div class="d-flex gap-2">
+        <button type="button" id="exportCsvBtn" class="btn btn-primary d-flex align-items-center gap-2 rounded-3 shadow-sm">
+            <i class="bi bi-file-earmark-arrow-down-fill"></i>
+            <span>Export CSV Report</span>
+        </button>
+    </div>
+</div>
+
+<!-- Filters Bar -->
+<div class="card-tech p-3 mb-4">
+    <div class="row g-3 align-items-center">
+        <div class="col-md-4 col-lg-3">
+            <label for="reportCourseFilter" class="form-label text-muted fs-xs text-uppercase fw-semibold mb-1">Filter by Course</label>
+            <select id="reportCourseFilter" class="form-select form-tech-control">
+                <option value="all">All Courses</option>
+                {% for course in courses %}
+                <option value="{{ course.id }}" {% if selected_course_id == course.id %}selected{% endif %}>
+                    {{ course.code }} - {{ course.name }}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div class="col-md-4 col-lg-3">
+            <label for="reportStatusFilter" class="form-label text-muted fs-xs text-uppercase fw-semibold mb-1">Attendance Criteria</label>
+            <select id="reportStatusFilter" class="form-select form-tech-control">
+                <option value="all">All Students</option>
+                <option value="eligible">Eligible (&gt;= 75% Attendance)</option>
+                <option value="warning">Low Attendance Warning (&lt; 75%)</option>
+            </select>
+        </div>
+
+        <div class="col-md-4 col-lg-3">
+            <label for="reportSearchInput" class="form-label text-muted fs-xs text-uppercase fw-semibold mb-1">Search Roster</label>
+            <input type="text" id="reportSearchInput" class="form-tech-control form-control" placeholder="Search student name or roll no...">
+        </div>
+
+        <div class="col-md-12 col-lg-3 text-lg-end pt-lg-3">
+            <span class="badge bg-dark-card border border-subtle text-muted fs-xs py-2 px-3 rounded-pill">
+                <i class="bi bi-info-circle text-primary me-1"></i> Academic Lab Threshold: <strong>75%</strong>
+            </span>
+        </div>
+    </div>
+</div>
+
+<!-- Report Summary Cards -->
+<div class="row g-3 mb-4">
+    <div class="col-sm-6 col-xl-3">
+        <div class="card-tech p-3 accent-primary">
+            <span class="text-muted fs-xs text-uppercase fw-semibold d-block mb-1">Sessions Evaluated</span>
+            <h3 class="fw-bold text-white mb-0" id="summaryTotalSessions">{{ report_summary.total_sessions|default(4) }}</h3>
+            <span class="text-muted fs-xxs">Across selected curriculum</span>
+        </div>
+    </div>
+
+    <div class="col-sm-6 col-xl-3">
+        <div class="card-tech p-3 accent-info">
+            <span class="text-muted fs-xs text-uppercase fw-semibold d-block mb-1">Roster Size</span>
+            <h3 class="fw-bold text-white mb-0" id="summaryTotalStudents">{{ report_summary.total_students|default(24) }}</h3>
+            <span class="text-muted fs-xxs">Enrolled students tracked</span>
+        </div>
+    </div>
+
+    <div class="col-sm-6 col-xl-3">
+        <div class="card-tech p-3 accent-success">
+            <span class="text-muted fs-xs text-uppercase fw-semibold d-block mb-1">Eligible Students (&ge; 75%)</span>
+            <h3 class="fw-bold text-success mb-0" id="summaryEligibleCount">{{ report_summary.eligible_count|default(21) }}</h3>
+            <span class="text-muted fs-xxs">Ready for lab evaluations</span>
+        </div>
+    </div>
+
+    <div class="col-sm-6 col-xl-3">
+        <div class="card-tech p-3 accent-warning">
+            <span class="text-muted fs-xs text-uppercase fw-semibold d-block mb-1">Low Attendance Alerts</span>
+            <h3 class="fw-bold text-warning mb-0" id="summaryWarningCount">{{ report_summary.warning_count|default(3) }}</h3>
+            <span class="text-muted fs-xxs">Requires faculty intervention</span>
+        </div>
+    </div>
+</div>
+
+<!-- Tabs: Student Percentages Table & Session History Table -->
+<div class="card-tech p-4">
+    <ul class="nav nav-pills mb-4 gap-2" id="reportTabs" role="tablist">
+        <li class="nav-item" role="presentation">
+            <button class="nav-link active rounded-pill px-3 fs-xs" id="students-tab" data-bs-toggle="pill" data-bs-target="#studentsTabPane" type="button" role="tab">
+                <i class="bi bi-people-fill me-1"></i> Student Attendance Percentages
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link rounded-pill px-3 fs-xs" id="sessions-tab" data-bs-toggle="pill" data-bs-target="#sessionsTabPane" type="button" role="tab">
+                <i class="bi bi-calendar-event-fill me-1"></i> Session-wise Audit Log
+            </button>
+        </li>
+    </ul>
+
+    <div class="tab-content" id="reportTabsContent">
+        <!-- Tab 1: Student Percentages -->
+        <div class="tab-pane fade show active" id="studentsTabPane" role="tabpanel">
+            <div class="table-responsive">
+                <table class="table table-tech w-100" id="studentPercentageTable">
+                    <thead>
+                        <tr>
+                            <th>Roll Number</th>
+                            <th>Student Name</th>
+                            <th>Course</th>
+                            <th>Attended / Total</th>
+                            <th>Percentage</th>
+                            <th>Status Badge</th>
+                        </tr>
+                    </thead>
+                    <tbody id="studentReportBody">
+                        {% if student_reports %}
+                            {% for item in student_reports %}
+                            <tr class="report-row" 
+                                data-name="{{ item.student_name|lower }}" 
+                                data-roll="{{ item.roll_no|lower }}" 
+                                data-course="{{ item.course_id }}" 
+                                data-status="{{ 'eligible' if item.percentage >= 75 else 'warning' }}">
+                                <td>
+                                    <span class="badge bg-dark-card text-primary border border-primary-subtle font-monospace px-2 py-1 fs-xs">
+                                        {{ item.roll_no }}
+                                    </span>
+                                </td>
+                                <td class="fw-semibold text-white fs-sm">{{ item.student_name }}</td>
+                                <td class="text-muted fs-xs">{{ item.course_code }}</td>
+                                <td>
+                                    <span class="fw-bold text-white fs-sm">{{ item.attended_sessions }}</span>
+                                    <span class="text-muted fs-xs">/ {{ item.total_sessions }}</span>
+                                </td>
+                                <td style="width: 220px;">
+                                    <div class="d-flex align-items-center gap-2">
+                                        <div class="progress flex-grow-1" style="height: 6px; background: rgba(255,255,255,0.06); border-radius: 9999px;">
+                                            <div class="progress-bar {% if item.percentage >= 75 %}bg-success{% else %}bg-warning{% endif %}" role="progressbar" style="width: {{ item.percentage }}%;" aria-valuenow="{{ item.percentage }}" aria-valuemin="0" aria-valuemax="100"></div>
+                                        </div>
+                                        <span class="fw-bold font-monospace fs-xs {% if item.percentage >= 75 %}text-success{% else %}text-warning{% endif %}">
+                                            {{ item.percentage }}%
+                                        </span>
+                                    </div>
+                                </td>
+                                <td>
+                                    {% if item.percentage >= 75 %}
+                                    <span class="badge badge-soft-success rounded-pill px-2 py-1 fs-xs">
+                                        <i class="bi bi-check-circle-fill me-1"></i> Eligible
+                                    </span>
+                                    {% else %}
+                                    <span class="badge badge-soft-warning rounded-pill px-2 py-1 fs-xs">
+                                        <i class="bi bi-exclamation-triangle-fill me-1"></i> Low Attendance
+                                    </span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        {% else %}
+                            <tr>
+                                <td colspan="6" class="text-center py-4 text-muted">
+                                    No attendance metrics recorded for this selection.
+                                </td>
+                            </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Tab 2: Session-wise Audit Log -->
+        <div class="tab-pane fade" id="sessionsTabPane" role="tabpanel">
+            <div class="table-responsive">
+                <table class="table table-tech w-100">
+                    <thead>
+                        <tr>
+                            <th>Session ID</th>
+                            <th>Course</th>
+                            <th>Date &amp; Time</th>
+                            <th>Attendance Count</th>
+                            <th>Attendance Rate</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if session_logs %}
+                            {% for sess in session_logs %}
+                            <tr>
+                                <td>
+                                    <span class="badge bg-dark-card border border-subtle text-muted font-monospace fs-xs">
+                                        #{{ sess.id }}
+                                    </span>
+                                </td>
+                                <td>
+                                    <div class="fw-semibold text-white fs-sm">{{ sess.course_code }}</div>
+                                    <div class="text-muted fs-xs">{{ sess.course_name }}</div>
+                                </td>
+                                <td>
+                                    <div class="text-white fs-sm">{{ sess.date }}</div>
+                                    <div class="text-muted fs-xs">{{ sess.start_time }}</div>
+                                </td>
+                                <td>
+                                    <strong class="text-white">{{ sess.present_count }}</strong>
+                                    <span class="text-muted fs-xs">/ {{ sess.total_enrolled }} Enrolled</span>
+                                </td>
+                                <td>
+                                    <span class="badge badge-soft-primary rounded-pill px-2 py-1 fs-xs">
+                                        {{ sess.attendance_percentage }}%
+                                    </span>
+                                </td>
+                                <td>
+                                    {% if sess.status == 'ACTIVE' %}
+                                    <span class="badge badge-soft-success rounded-pill px-2 py-1 fs-xs">
+                                        <i class="bi bi-record-fill text-danger me-1 animate-pulse"></i> LIVE
+                                    </span>
+                                    {% else %}
+                                    <span class="badge bg-dark-card border border-subtle text-muted rounded-pill px-2 py-1 fs-xs">
+                                        Concluded
+                                    </span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        {% else %}
+                            <tr>
+                                <td colspan="6" class="text-center py-4 text-muted">
+                                    No session logs recorded yet.
+                                </td>
+                            </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/reports.js') }}"></script>
+{% endblock %}
