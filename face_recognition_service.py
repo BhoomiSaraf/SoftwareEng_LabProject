@@ -286,28 +286,30 @@ class FaceRecognitionService:
     def detect_faces(
         self,
         image: np.ndarray,
-        scale_factor: float = 1.1,
-        min_neighbors: int = 5,
-        min_size: Tuple[int, int] = (40, 40)
+        scale_factor: float = 1.15,
+        min_neighbors: int = 6,
+        min_size: Tuple[int, int] = (70, 70)
     ) -> List[Tuple[int, int, int, int]]:
         """
-        Detect face bounding boxes in an image using Haar Cascade.
+        Detect face bounding boxes in an image using Haar Cascade with CLAHE adaptive contrast.
         
         Args:
             image: BGR numpy image.
             scale_factor: Parameter specifying how much the image size is reduced at each scale.
             min_neighbors: Parameter specifying how many neighbors each candidate rectangle should retain.
-            min_size: Minimum possible face size in pixels.
+            min_size: Minimum possible face size in pixels (filters out background noise/posters).
             
         Returns:
-            List of bounding boxes in (x, y, w, h) format.
+            List of bounding boxes in (x, y, w, h) format, filtered for prominent faces.
         """
         if image is None or image.size == 0:
             return []
 
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        # Apply histogram equalization to enhance contrast in diverse lighting conditions
-        gray = cv2.equalizeHist(gray)
+        # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
+        # Enhances dimly lit faces while suppressing background grain/wall poster edges
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        gray = clahe.apply(gray)
 
         faces = self.face_cascade.detectMultiScale(
             gray,
@@ -317,8 +319,22 @@ class FaceRecognitionService:
             flags=cv2.CASCADE_SCALE_IMAGE
         )
 
-        # Convert numpy array to list of tuples
-        return [(int(x), int(y), int(w), int(h)) for (x, y, w, h) in faces]
+        if len(faces) == 0:
+            return []
+
+        # Sort detections by area descending (largest first)
+        sorted_faces = sorted(faces, key=lambda f: f[2] * f[3], reverse=True)
+        largest_area = sorted_faces[0][2] * sorted_faces[0][3]
+
+        # Filter out minor background false-positives (like posters/wall art):
+        # Only keep candidate faces that are at least 35% of the largest face area
+        significant_faces = [
+            (int(x), int(y), int(w), int(h))
+            for (x, y, w, h) in sorted_faces
+            if (w * h) >= 0.35 * largest_area
+        ]
+
+        return significant_faces
 
     def extract_embedding(self, face_crop: np.ndarray) -> np.ndarray:
         """

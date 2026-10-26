@@ -47,6 +47,12 @@ def run_verification():
     print("=" * 60 + "\n")
 
     registered_students = set()
+    smoothed_box = None
+    smoothed_conf = 0.0
+    active_status = "NO_FACE_DETECTED"
+    active_result = {}
+    lost_frames = 0
+    MAX_LOST_FRAMES = 5  # Hold box for up to 5 dropped frames to eliminate flickering
 
     try:
         while True:
@@ -55,49 +61,89 @@ def run_verification():
                 print("Failed to grab frame.")
                 break
 
-            # Run matching on current frame
-            result = face_service.match_face(frame)
-            status = result["status"]
-            box = result.get("box")
-            confidence = result.get("confidence", 0.0)
+            # Mirror the frame horizontally for natural selfie view
+            frame = cv2.flip(frame, 1)
 
-            # Draw visual feedback on display frame
+            # Run matching on the current frame
+            raw_result = face_service.match_face(frame)
+            raw_status = raw_result["status"]
+            raw_box = raw_result.get("box")
+            raw_conf = raw_result.get("confidence", 0.0)
+
+            # Temporal smoothing logic
+            if raw_box is not None:
+                lost_frames = 0
+                active_status = raw_status
+                active_result = raw_result
+                bx, by, bw, bh = [float(v) for v in raw_box]
+
+                if smoothed_box is None:
+                    smoothed_box = [bx, by, bw, bh]
+                    smoothed_conf = raw_conf
+                else:
+                    # Exponential Moving Average (alpha=0.35) for rock-solid stability
+                    alpha = 0.35
+                    smoothed_box[0] = alpha * bx + (1 - alpha) * smoothed_box[0]
+                    smoothed_box[1] = alpha * by + (1 - alpha) * smoothed_box[1]
+                    smoothed_box[2] = alpha * bw + (1 - alpha) * smoothed_box[2]
+                    smoothed_box[3] = alpha * bh + (1 - alpha) * smoothed_box[3]
+                    smoothed_conf = alpha * raw_conf + (1 - alpha) * smoothed_conf
+            else:
+                # No face detected in raw frame: check persistence grace period
+                if smoothed_box is not None and lost_frames < MAX_LOST_FRAMES:
+                    lost_frames += 1
+                else:
+                    smoothed_box = None
+                    active_status = "NO_FACE_DETECTED"
+                    active_result = {}
+                    smoothed_conf = 0.0
+
+            # Draw visual feedback
             display_frame = frame.copy()
             h, w = display_frame.shape[:2]
 
             # Header overlay
-            cv2.rectangle(display_frame, (0, 0), (w, 50), (30, 30, 30), -1)
-            reg_text = f"Enrolled: {list(registered_students) if registered_students else 'None (Press R to register)'}"
-            cv2.putText(display_frame, reg_text, (15, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 2)
+            cv2.rectangle(display_frame, (0, 0), (w, 52), (24, 24, 24), -1)
+            reg_text = f"Enrolled: {list(registered_students) if registered_students else 'None (Press R to enroll current face)'}"
+            cv2.putText(display_frame, reg_text, (15, 33), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (220, 220, 220), 2)
 
-            if box is not None:
-                bx, by, bw, bh = box
-                if status == "MATCHED":
-                    color = (0, 255, 0)  # Green
-                    label = f"MATCHED: Student {result['student_id']} ({confidence:.1%})"
-                elif status == "UNKNOWN_FACE":
-                    color = (0, 165, 255)  # Orange
-                    label = f"UNKNOWN FACE ({confidence:.1%})"
-                elif status == "MULTIPLE_FACES_DETECTED":
+            if smoothed_box is not None:
+                sbx, sby, sbw, sbh = [int(round(v)) for v in smoothed_box]
+
+                if active_status == "MATCHED":
+                    color = (0, 230, 80)  # Bright Green
+                    label = f"MATCHED: Student {active_result.get('student_id')} ({smoothed_conf:.1%})"
+                elif active_status == "UNKNOWN_FACE":
+                    color = (0, 160, 255)  # Orange
+                    label = f"UNKNOWN FACE ({smoothed_conf:.1%})"
+                elif active_status == "MULTIPLE_FACES_DETECTED":
                     color = (0, 0, 255)  # Red
-                    label = f"MULTIPLE FACES ({result.get('face_count', 2)})"
+                    label = f"MULTIPLE FACES ({active_result.get('face_count', 2)})"
                 else:
-                    color = (255, 255, 0)
-                    label = status
+                    color = (255, 200, 0)
+                    label = active_status
 
-                # Draw bounding box and label
-                cv2.rectangle(display_frame, (bx, by), (bx + bw, by + bh), color, 2)
-                cv2.rectangle(display_frame, (bx, by - 28), (bx + bw, by), color, -1)
+                # Draw smooth bounding box with rounded corners / thick frame
+                cv2.rectangle(display_frame, (sbx, sby), (sbx + sbw, sby + sbh), color, 2)
+                # Text badge background
+                badge_w = max(180, len(label) * 11)
+                cv2.rectangle(display_frame, (sbx, sby - 28), (sbx + badge_w, sby), color, -1)
                 cv2.putText(
-                    display_frame, label, (bx + 5, by - 8),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2
+                    display_frame, label, (sbx + 6, sby - 8),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 0, 0), 2
                 )
             else:
                 # No face detected
                 cv2.putText(
-                    display_frame, "STATUS: No Face in View", (15, h - 20),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (150, 150, 150), 2
+                    display_frame, "STATUS: Looking for face...", (15, h - 20),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (130, 130, 130), 2
                 )
+
+            # Footer instructions
+            cv2.putText(
+                display_frame, "[R] Register Face   [C] Clear   [Q] Quit", (15, h - 15),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1
+            )
 
             cv2.imshow("Smart Attendance — Face Recognition Test (Press 'q' to exit)", display_frame)
 
@@ -105,7 +151,7 @@ def run_verification():
             if key == ord('q'):
                 break
             elif key == ord('r'):
-                # Register face as student 101
+                # Register currently visible face as student 101
                 reg_res = face_service.register_student_face("101", frame)
                 if reg_res["success"]:
                     registered_students.add("101")
@@ -115,6 +161,7 @@ def run_verification():
             elif key == ord('c'):
                 face_service.clear_registry()
                 registered_students.clear()
+                smoothed_box = None
                 print("\n[*] Cleared all registered faces.")
 
     finally:
