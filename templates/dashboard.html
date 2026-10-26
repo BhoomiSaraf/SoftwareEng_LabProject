@@ -1,0 +1,291 @@
+{% extends "base.html" %}
+
+{% block title %}Faculty Dashboard - Smart Attendance System{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-4">
+    <div>
+        <h2 class="h3 fw-bold mb-1">Faculty Dashboard</h2>
+        <p class="text-muted fs-sm mb-0">Overview of active attendance sessions, registered students, and courses</p>
+    </div>
+    <div class="d-flex gap-2">
+        <button type="button" class="btn btn-primary d-flex align-items-center gap-2 rounded-3 shadow-sm" data-bs-toggle="modal" data-bs-target="#startSessionModal">
+            <i class="bi bi-camera-video-fill"></i>
+            <span>Start Attendance Session</span>
+        </button>
+        <a href="{{ url_for('frontend.reports') }}" class="btn btn-tech-outline d-flex align-items-center gap-2 rounded-3">
+            <i class="bi bi-download"></i>
+            <span>Export Reports</span>
+        </a>
+    </div>
+</div>
+
+<!-- Stat Metric Cards -->
+<div class="row g-3 mb-4">
+    <div class="col-sm-6 col-xl-3">
+        <div class="card-tech accent-primary p-3 p-xl-4 h-100">
+            <div class="d-flex justify-content-between align-items-start">
+                <div>
+                    <span class="text-muted fs-xs text-uppercase fw-semibold tracking-wider d-block mb-1">Active Sessions</span>
+                    <h3 class="fw-bold text-white mb-0" id="statActiveSessions">{{ stats.active_sessions if stats else 1 }}</h3>
+                    <span class="badge bg-success-subtle text-success border border-success-subtle rounded-pill fs-xxs mt-2">
+                        <i class="bi bi-broadcast me-1"></i> Live Scanning
+                    </span>
+                </div>
+                <div class="stat-card-icon bg-primary-soft text-primary">
+                    <i class="bi bi-camera-video"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-sm-6 col-xl-3">
+        <div class="card-tech accent-info p-3 p-xl-4 h-100">
+            <div class="d-flex justify-content-between align-items-start">
+                <div>
+                    <span class="text-muted fs-xs text-uppercase fw-semibold tracking-wider d-block mb-1">Total Students</span>
+                    <h3 class="fw-bold text-white mb-0" id="statTotalStudents">{{ stats.total_students if stats else 24 }}</h3>
+                    <span class="badge bg-info-subtle text-info border border-info-subtle rounded-pill fs-xxs mt-2">
+                        <i class="bi bi-person-check-fill me-1"></i> Face Enrolled
+                    </span>
+                </div>
+                <div class="stat-card-icon bg-info-soft text-info">
+                    <i class="bi bi-people"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-sm-6 col-xl-3">
+        <div class="card-tech accent-success p-3 p-xl-4 h-100">
+            <div class="d-flex justify-content-between align-items-start">
+                <div>
+                    <span class="text-muted fs-xs text-uppercase fw-semibold tracking-wider d-block mb-1">Courses Managed</span>
+                    <h3 class="fw-bold text-white mb-0" id="statTotalCourses">{{ stats.total_courses if stats else 3 }}</h3>
+                    <span class="badge bg-primary-subtle text-primary border border-primary-subtle rounded-pill fs-xxs mt-2">
+                        SE Lab, ML, OS
+                    </span>
+                </div>
+                <div class="stat-card-icon bg-success-soft text-success">
+                    <i class="bi bi-book"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-sm-6 col-xl-3">
+        <div class="card-tech accent-warning p-3 p-xl-4 h-100">
+            <div class="d-flex justify-content-between align-items-start">
+                <div>
+                    <span class="text-muted fs-xs text-uppercase fw-semibold tracking-wider d-block mb-1">Avg Attendance Rate</span>
+                    <h3 class="fw-bold text-white mb-0" id="statAvgAttendance">{{ stats.avg_attendance if stats else '88.5%' }}</h3>
+                    <span class="badge bg-warning-subtle text-warning border border-warning-subtle rounded-pill fs-xxs mt-2">
+                        <i class="bi bi-graph-up-arrow me-1"></i> Lab Threshold &gt; 75%
+                    </span>
+                </div>
+                <div class="stat-card-icon bg-warning-soft text-warning">
+                    <i class="bi bi-pie-chart"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Main Section: Recent Sessions and Quick Actions -->
+<div class="row g-4">
+    <!-- Recent Sessions Table -->
+    <div class="col-lg-8">
+        <div class="card-tech p-4">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <div class="d-flex align-items-center gap-2">
+                    <i class="bi bi-clock-history text-primary fs-5"></i>
+                    <h4 class="h5 fw-bold mb-0">Recent Attendance Sessions</h4>
+                </div>
+                <a href="{{ url_for('frontend.reports') }}" class="btn btn-sm btn-tech-outline rounded-pill px-3 fs-xs">
+                    View All History
+                </a>
+            </div>
+
+            <div class="table-responsive">
+                <table class="table table-tech w-100">
+                    <thead>
+                        <tr>
+                            <th>Session / Course</th>
+                            <th>Date &amp; Time</th>
+                            <th>Status</th>
+                            <th>Attendance</th>
+                            <th class="text-end">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="recentSessionsTableBody">
+                        {% if recent_sessions %}
+                            {% for sess in recent_sessions %}
+                            <tr>
+                                <td>
+                                    <div class="fw-semibold text-white">{{ sess.course_code }}</div>
+                                    <div class="text-muted fs-xs">{{ sess.course_name }}</div>
+                                </td>
+                                <td>
+                                    <div class="text-white fs-sm">{{ sess.date }}</div>
+                                    <div class="text-muted fs-xs">{{ sess.start_time }}</div>
+                                </td>
+                                <td>
+                                    {% if sess.status == 'ACTIVE' %}
+                                    <span class="badge badge-soft-success rounded-pill px-2 py-1 fs-xs">
+                                        <i class="bi bi-record-fill me-1 text-danger animate-pulse"></i> LIVE
+                                    </span>
+                                    {% else %}
+                                    <span class="badge bg-dark-card border border-subtle text-muted rounded-pill px-2 py-1 fs-xs">
+                                        Completed
+                                    </span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <div class="fw-semibold text-white">{{ sess.present_count }} / {{ sess.total_enrolled }}</div>
+                                    <div class="progress mt-1" style="height: 4px; background: rgba(255,255,255,0.06);">
+                                        <div class="progress-bar bg-primary" role="progressbar" style="width: {{ sess.attendance_percentage }}%;" aria-valuenow="{{ sess.attendance_percentage }}" aria-valuemin="0" aria-valuemax="100"></div>
+                                    </div>
+                                </td>
+                                <td class="text-end">
+                                    {% if sess.status == 'ACTIVE' %}
+                                    <a href="{{ url_for('frontend.session_view', session_id=sess.id) }}" class="btn btn-sm btn-primary rounded-pill px-3 fs-xs">
+                                        <i class="bi bi-camera-fill me-1"></i> Open Session
+                                    </a>
+                                    {% else %}
+                                    <a href="{{ url_for('frontend.reports', session_id=sess.id) }}" class="btn btn-sm btn-tech-outline rounded-pill px-3 fs-xs">
+                                        Report
+                                    </a>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        {% else %}
+                            <tr>
+                                <td colspan="5" class="text-center py-4 text-muted">
+                                    No sessions created yet. Click "Start Attendance Session" to launch your first session.
+                                </td>
+                            </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Actions and System Integrity Info -->
+    <div class="col-lg-4">
+        <div class="card-tech p-4 mb-4">
+            <h4 class="h5 fw-bold mb-3 d-flex align-items-center gap-2">
+                <i class="bi bi-lightning-charge-fill text-warning"></i>
+                <span>Quick Actions</span>
+            </h4>
+            <div class="d-grid gap-2">
+                <a href="{{ url_for('frontend.students') }}" class="btn btn-tech-outline text-start p-3 d-flex align-items-center justify-content-between rounded-3">
+                    <div class="d-flex align-items-center gap-3">
+                        <i class="bi bi-person-plus text-primary fs-5"></i>
+                        <div>
+                            <div class="fw-semibold text-white fs-sm">Manage &amp; Enroll Students</div>
+                            <div class="text-muted fs-xs">Register new roll numbers and face embeddings</div>
+                        </div>
+                    </div>
+                    <i class="bi bi-chevron-right text-muted"></i>
+                </a>
+
+                <a href="{{ url_for('frontend.courses') }}" class="btn btn-tech-outline text-start p-3 d-flex align-items-center justify-content-between rounded-3">
+                    <div class="d-flex align-items-center gap-3">
+                        <i class="bi bi-journal-plus text-info fs-5"></i>
+                        <div>
+                            <div class="fw-semibold text-white fs-sm">Course Rosters</div>
+                            <div class="text-muted fs-xs">Map enrolled students to your courses</div>
+                        </div>
+                    </div>
+                    <i class="bi bi-chevron-right text-muted"></i>
+                </a>
+
+                <a href="{{ url_for('frontend.reports') }}" class="btn btn-tech-outline text-start p-3 d-flex align-items-center justify-content-between rounded-3">
+                    <div class="d-flex align-items-center gap-3">
+                        <i class="bi bi-filetype-csv text-success fs-5"></i>
+                        <div>
+                            <div class="fw-semibold text-white fs-sm">Attendance Reports &amp; CSV</div>
+                            <div class="text-muted fs-xs">Export lab evaluation records</div>
+                        </div>
+                    </div>
+                    <i class="bi bi-chevron-right text-muted"></i>
+                </a>
+            </div>
+        </div>
+
+        <!-- Architectural Contract Compliance Card -->
+        <div class="card-tech p-4 border-subtle">
+            <h5 class="fw-bold mb-2 fs-sm text-uppercase text-muted tracking-wider">MVP Workflow Integrity</h5>
+            <ul class="list-unstyled mb-0 fs-xs text-muted d-flex flex-column gap-2">
+                <li class="d-flex align-items-center gap-2">
+                    <i class="bi bi-check-circle-fill text-success"></i>
+                    <span>Automatic duplicate attendance prevention</span>
+                </li>
+                <li class="d-flex align-items-center gap-2">
+                    <i class="bi bi-check-circle-fill text-success"></i>
+                    <span>Course enrollment pre-validation</span>
+                </li>
+                <li class="d-flex align-items-center gap-2">
+                    <i class="bi bi-check-circle-fill text-success"></i>
+                    <span>Backend-verified attendance timestamping</span>
+                </li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Start Attendance Session -->
+<div class="modal fade modal-tech" id="startSessionModal" tabindex="-1" aria-labelledby="startSessionModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold" id="startSessionModalLabel">
+                    <i class="bi bi-camera-video text-primary me-2"></i>Launch Attendance Session
+                </h5>
+                <button type="button" class="btn-close btn-close-white shadow-none" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form id="startSessionForm" action="{{ url_for('frontend.start_session_action') }}" method="POST">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="courseSelect" class="form-label text-muted fs-xs text-uppercase fw-semibold">Select Course</label>
+                        <select class="form-select form-tech-control" id="courseSelect" name="course_id" required>
+                            {% if courses %}
+                                {% for course in courses %}
+                                <option value="{{ course.id }}">{{ course.code }} - {{ course.name }} ({{ course.enrolled_count }} enrolled)</option>
+                                {% endfor %}
+                            {% else %}
+                                <option value="1">CS301 - Software Engineering Lab (24 students)</option>
+                                <option value="2">CS304 - Machine Learning (18 students)</option>
+                                <option value="3">CS306 - Operating Systems (22 students)</option>
+                            {% endif %}
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="sessionTopic" class="form-label text-muted fs-xs text-uppercase fw-semibold">Session Topic / Notes (Optional)</label>
+                        <input type="text" class="form-tech-control form-control" id="sessionTopic" name="topic" placeholder="e.g. Lab 4 - Face Recognition Verification">
+                    </div>
+
+                    <div class="p-3 rounded-3 bg-dark-glass border border-subtle">
+                        <div class="d-flex align-items-center gap-2 text-warning fs-xs mb-1">
+                            <i class="bi bi-info-circle-fill"></i>
+                            <span class="fw-semibold">Session Rule:</span>
+                        </div>
+                        <p class="text-muted fs-xs mb-0">
+                            Only students officially enrolled in the selected course will be accepted. Duplicate scans during this session are automatically rejected with a warning.
+                        </p>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-tech-outline rounded-pill px-3" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" id="startSessionSubmitBtn" class="btn btn-primary rounded-pill px-4">
+                        <i class="bi bi-play-fill me-1"></i> Start Session Now
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

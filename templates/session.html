@@ -1,0 +1,245 @@
+{% extends "base.html" %}
+
+{% block title %}Live Attendance Session - {{ session_data.course_code }} - Smart Attendance System{% endblock %}
+
+{% block content %}
+<!-- Session Top Bar Header -->
+<div class="card-tech accent-primary p-3 p-md-4 mb-4">
+    <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3">
+        <div>
+            <div class="d-flex align-items-center gap-2 mb-1">
+                <span class="badge bg-primary-soft text-primary border border-primary-subtle font-monospace px-2 py-1 fs-xs">
+                    {{ session_data.course_code }}
+                </span>
+                <span class="badge bg-danger-subtle text-danger border border-danger-subtle rounded-pill fs-xxs">
+                    <i class="bi bi-broadcast text-danger animate-pulse me-1"></i> LIVE ATTENDANCE SESSION
+                </span>
+                <span class="text-muted fs-xs">Session #{{ session_data.id }}</span>
+            </div>
+            <h3 class="h4 fw-bold text-white mb-0">{{ session_data.course_name }}</h3>
+            <div class="text-muted fs-xs mt-1 d-flex flex-wrap gap-3">
+                <span><i class="bi bi-clock me-1"></i> Started at: <strong class="text-white">{{ session_data.start_time }}</strong></span>
+                <span><i class="bi bi-stopwatch me-1"></i> Duration: <strong class="text-white" id="sessionTimer">00:00:00</strong></span>
+                <span><i class="bi bi-person-badge me-1"></i> Faculty: <strong class="text-white">{{ session_data.faculty_name }}</strong></span>
+            </div>
+        </div>
+
+        <div class="d-flex align-items-center gap-2">
+            <button type="button" id="toggleScanModeBtn" class="btn btn-tech-outline rounded-pill px-3 fs-sm">
+                <i class="bi bi-play-circle-fill text-success me-1"></i> 
+                <span id="scanModeLabel">Start Auto-Scan</span>
+            </button>
+            <button type="button" id="endSessionBtn" class="btn btn-outline-danger rounded-pill px-3 fs-sm" data-session-id="{{ session_data.id }}">
+                <i class="bi bi-stop-circle me-1"></i> Close Session
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Session Split Screen: Camera Scanner on Left, Real-time Attendance Feed on Right -->
+<div class="row g-4">
+    <!-- Left Column: Camera Viewport & Recognition Feedback HUD -->
+    <div class="col-lg-6 col-xl-5">
+        <div class="card-tech p-3 mb-4">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <div class="d-flex align-items-center gap-2">
+                    <i class="bi bi-camera-video text-primary"></i>
+                    <h5 class="fw-bold fs-sm mb-0 text-uppercase tracking-wider">Face Recognition Scanner</h5>
+                </div>
+                <div id="recognitionStatusPill" class="recognition-status-pill idle">
+                    <i class="bi bi-dot fs-5"></i>
+                    <span id="recognitionStatusText">Awaiting Face...</span>
+                </div>
+            </div>
+
+            <!-- Video Container -->
+            <div class="camera-container mb-3" id="cameraContainer">
+                <video id="sessionVideo" autoplay playsinline muted></video>
+                <canvas id="sessionCanvas" class="d-none"></canvas>
+                
+                <div class="scanner-overlay" id="scannerOverlay">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span class="badge bg-dark-card border border-subtle text-muted fs-xxs" id="cameraStatusBadge">
+                            <i class="bi bi-camera me-1"></i> CAMERA STANDBY
+                        </span>
+                        <span class="badge bg-dark-card border border-subtle text-muted font-monospace fs-xxs" id="scanCounter">
+                            0 SCANS
+                        </span>
+                    </div>
+
+                    <div class="scan-crosshairs"></div>
+                    <div class="scan-laser-line" id="scanLaserLine" style="display: none;"></div>
+
+                    <div class="text-center" id="hudNotice">
+                        <span class="text-white fs-xs bg-dark-glass py-1 px-3 rounded-pill border border-subtle shadow-sm">
+                            Click "Start Camera" to initialize optical recognition
+                        </span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Recognition Camera Controls -->
+            <div class="d-flex flex-wrap gap-2 mb-3">
+                <button type="button" id="startCamBtn" class="btn btn-primary flex-grow-1 rounded-pill fs-sm">
+                    <i class="bi bi-camera-video-fill me-1"></i> Start Camera
+                </button>
+                <button type="button" id="captureSingleFrameBtn" class="btn btn-tech-outline rounded-pill px-3 fs-sm" disabled>
+                    <i class="bi bi-fullscreen me-1 text-primary"></i> Scan Frame Once
+                </button>
+            </div>
+
+            <!-- Live Verification Feedback Box -->
+            <div id="recognitionFeedbackBox" class="p-3 rounded-3 bg-dark-glass border border-subtle">
+                <div class="d-flex align-items-center gap-2 mb-1">
+                    <i class="bi bi-info-circle text-primary" id="feedbackIcon"></i>
+                    <span class="fw-semibold text-white fs-sm" id="feedbackTitle">Recognition Engine Idle</span>
+                </div>
+                <p class="text-muted fs-xs mb-0" id="feedbackDetails">
+                    When an enrolled student faces the camera, their identity will be verified against the model embeddings and recorded with an official timestamp.
+                </p>
+            </div>
+        </div>
+
+        <!-- Manual Attendance Entry Accordion (Fallback for Edge Cases) -->
+        <div class="card-tech p-3">
+            <div class="d-flex justify-content-between align-items-center cursor-pointer" data-bs-toggle="collapse" data-bs-target="#manualEntryCollapse">
+                <div class="d-flex align-items-center gap-2">
+                    <i class="bi bi-pencil-square text-warning"></i>
+                    <span class="fw-semibold text-white fs-sm">Faculty Manual Override</span>
+                </div>
+                <i class="bi bi-chevron-down text-muted fs-xs"></i>
+            </div>
+            <div class="collapse mt-3" id="manualEntryCollapse">
+                <p class="text-muted fs-xs mb-2">If facial recognition is temporarily obstructed, faculty may manually record attendance for an enrolled student:</p>
+                <div class="input-group">
+                    <select id="manualStudentSelect" class="form-select form-tech-control form-select-sm">
+                        <option value="">Select Enrolled Student...</option>
+                        {% for student in enrolled_students %}
+                        <option value="{{ student.id }}">{{ student.roll_no }} - {{ student.name }}</option>
+                        {% endfor %}
+                    </select>
+                    <button type="button" id="markManualBtn" class="btn btn-sm btn-warning">
+                        Mark Present
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Right Column: Live Attendance Metrics & Real-time Record Table -->
+    <div class="col-lg-6 col-xl-7">
+        <!-- Attendance Metric Summary Cards -->
+        <div class="row g-2 mb-3">
+            <div class="col-4">
+                <div class="card-tech p-3 text-center">
+                    <span class="text-muted fs-xs text-uppercase fw-semibold d-block">Enrolled</span>
+                    <h3 class="fw-bold text-white mb-0" id="enrolledCount">{{ session_data.total_enrolled }}</h3>
+                </div>
+            </div>
+            <div class="col-4">
+                <div class="card-tech p-3 text-center accent-success">
+                    <span class="text-muted fs-xs text-uppercase fw-semibold d-block">Present</span>
+                    <h3 class="fw-bold text-success mb-0" id="presentCount">{{ session_data.present_count }}</h3>
+                </div>
+            </div>
+            <div class="col-4">
+                <div class="card-tech p-3 text-center accent-info">
+                    <span class="text-muted fs-xs text-uppercase fw-semibold d-block">Attendance %</span>
+                    <h3 class="fw-bold text-info mb-0" id="percentageDisplay">{{ session_data.attendance_percentage }}%</h3>
+                </div>
+            </div>
+        </div>
+
+        <!-- Progress Bar -->
+        <div class="card-tech p-3 mb-3">
+            <div class="d-flex justify-content-between align-items-center fs-xs text-muted mb-1">
+                <span>Session Attendance Progress</span>
+                <span id="progressBarLabel">{{ session_data.present_count }} of {{ session_data.total_enrolled }} Students Present</span>
+            </div>
+            <div class="progress" style="height: 8px; background: rgba(255,255,255,0.06); border-radius: 9999px;">
+                <div id="attendanceProgressBar" class="progress-bar bg-primary" role="progressbar" style="width: {{ session_data.attendance_percentage }}%;" aria-valuenow="{{ session_data.attendance_percentage }}" aria-valuemin="0" aria-valuemax="100"></div>
+            </div>
+        </div>
+
+        <!-- Real-time Attendance Table -->
+        <div class="card-tech p-4">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <div class="d-flex align-items-center gap-2">
+                    <i class="bi bi-card-checklist text-primary fs-5"></i>
+                    <h5 class="fw-bold fs-sm mb-0 text-uppercase tracking-wider">Attendance Log (Session #{{ session_data.id }})</h5>
+                </div>
+                <span class="badge bg-dark-card border border-subtle text-muted fs-xxs">
+                    <i class="bi bi-shield-check text-success me-1"></i> Duplicate Protection Active
+                </span>
+            </div>
+
+            <div class="table-responsive" style="max-height: 480px; overflow-y: auto;">
+                <table class="table table-tech w-100" id="sessionAttendanceTable">
+                    <thead>
+                        <tr>
+                            <th>Roll Number</th>
+                            <th>Student Name</th>
+                            <th>Timestamp</th>
+                            <th>Method</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="sessionAttendanceBody">
+                        {% if attendance_records %}
+                            {% for record in attendance_records %}
+                            <tr class="attendance-feed-row" id="row-{{ record.student_id }}">
+                                <td>
+                                    <span class="badge bg-dark-card text-primary border border-primary-subtle font-monospace px-2 py-1 fs-xs">
+                                        {{ record.roll_no }}
+                                    </span>
+                                </td>
+                                <td class="fw-semibold text-white fs-sm">{{ record.student_name }}</td>
+                                <td class="text-muted fs-xs">{{ record.timestamp }}</td>
+                                <td>
+                                    {% if record.method == 'FACE_RECOGNITION' or record.method == 'Face Recognition' %}
+                                    <span class="badge badge-soft-primary rounded-pill px-2 py-1 fs-xxs">
+                                        <i class="bi bi-camera-fill me-1"></i> Face ID
+                                    </span>
+                                    {% else %}
+                                    <span class="badge bg-dark-card border border-subtle text-muted rounded-pill px-2 py-1 fs-xxs">
+                                        <i class="bi bi-pencil-fill me-1"></i> Manual
+                                    </span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <span class="badge badge-soft-success rounded-pill px-2 py-1 fs-xs">
+                                        <i class="bi bi-check-circle-fill me-1"></i> Present
+                                    </span>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        {% else %}
+                            <tr id="emptyAttendanceRow">
+                                <td colspan="5" class="text-center py-5 text-muted">
+                                    <i class="bi bi-person-bounding-box fs-2 text-muted mb-2 d-block"></i>
+                                    No attendance marked yet. Point the webcam at enrolled students to record attendance.
+                                </td>
+                            </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<!-- Pass session configuration parameters into JS -->
+<script>
+window.SESSION_CONFIG = {
+    sessionId: {{ session_data.id }},
+    courseId: {{ session_data.course_id }},
+    startTime: "{{ session_data.start_time }}",
+    totalEnrolled: {{ session_data.total_enrolled }},
+    presentCount: {{ session_data.present_count }},
+    status: "{{ session_data.status }}"
+};
+</script>
+<script src="{{ url_for('static', filename='js/session.js') }}"></script>
+{% endblock %}
