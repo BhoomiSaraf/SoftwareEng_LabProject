@@ -1,0 +1,58 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# SQLite databases & local data
+*.db
+*.sqlite
+*.sqlite3
+
+# Biometric and raw face images (DO NOT COMMIT RAW BIOMETRIC DATA)
+data/faces/
+data/raw/
+*.jpg
+*.jpeg
+*.png
+!static/images/*.png
+!static/images/*.jpg
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# IDE and editors
+.vscode/
+.idea/
+*.swp
+*.swo
