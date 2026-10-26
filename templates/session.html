@@ -17,10 +17,10 @@
                 <span class="text-muted fs-xs">Session #{{ session_data.id }}</span>
             </div>
             <h3 class="h4 fw-bold text-white mb-0">{{ session_data.course_name }}</h3>
-            <div class="text-muted fs-xs mt-1 d-flex flex-wrap gap-3">
-                <span><i class="bi bi-clock me-1"></i> Started at: <strong class="text-white">{{ session_data.start_time }}</strong></span>
-                <span><i class="bi bi-stopwatch me-1"></i> Duration: <strong class="text-white" id="sessionTimer">00:00:00</strong></span>
-                <span><i class="bi bi-person-badge me-1"></i> Faculty: <strong class="text-white">{{ session_data.faculty_name }}</strong></span>
+            <div class="text-slate-300 fs-xs mt-1 d-flex flex-wrap gap-3">
+                <span><i class="bi bi-clock me-1 text-primary"></i> Started at: <strong class="text-white">{{ session_data.start_time }}</strong></span>
+                <span><i class="bi bi-stopwatch me-1 text-info"></i> Duration: <strong class="text-white" id="sessionTimer">00:00:00</strong></span>
+                <span><i class="bi bi-person-badge me-1 text-warning"></i> Faculty: <strong class="text-white">{{ session_data.faculty_name }}</strong></span>
             </div>
         </div>
 

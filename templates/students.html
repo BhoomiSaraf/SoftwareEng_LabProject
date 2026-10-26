@@ -6,10 +6,10 @@
 <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-4">
     <div>
         <h2 class="h3 fw-bold mb-1">Student Management</h2>
-        <p class="text-muted fs-sm mb-0">Register students, manage academic profiles, and capture reference face data</p>
+        <p class="text-slate-300 fs-sm mb-0">Register students, manage academic profiles, and capture reference face data</p>
     </div>
     <div class="d-flex gap-2">
-        <button type="button" class="btn btn-primary d-flex align-items-center gap-2 rounded-3 shadow-sm" data-bs-toggle="modal" data-bs-target="#addStudentModal">
+        <button type="button" class="btn btn-primary d-flex align-items-center gap-2 rounded-3 shadow-sm px-3" data-bs-toggle="modal" data-bs-target="#addStudentModal">
             <i class="bi bi-person-plus-fill"></i>
             <span>Register New Student</span>
         </button>
@@ -71,7 +71,7 @@
                                 <span>{{ student.name }}</span>
                             </div>
                         </td>
-                        <td class="text-muted fs-sm">{{ student.email }}</td>
+                        <td class="text-slate-300 fs-sm">{{ student.email }}</td>
                         <td>
                             {% if student.has_face %}
                             <span class="badge badge-soft-success rounded-pill px-2 py-1 fs-xs">
@@ -83,7 +83,7 @@
                             </span>
                             {% endif %}
                         </td>
-                        <td class="text-muted fs-xs">
+                        <td class="text-slate-300 fs-xs">
                             {{ student.course_codes|join(', ') if student.course_codes else 'None' }}
                         </td>
                         <td class="text-end">
