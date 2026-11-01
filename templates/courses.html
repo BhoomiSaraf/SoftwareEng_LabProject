@@ -6,10 +6,10 @@
 <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-4">
     <div>
         <h2 class="h3 fw-bold mb-1">Course &amp; Enrollment Management</h2>
-        <p class="text-muted fs-sm mb-0">Create academic courses, assign faculty, and map enrolled students for attendance eligibility</p>
+        <p class="text-slate-300 fs-sm mb-0">Create academic courses, assign faculty, and map enrolled students for attendance eligibility</p>
     </div>
     <div class="d-flex gap-2">
-        <button type="button" class="btn btn-primary d-flex align-items-center gap-2 rounded-3 shadow-sm" data-bs-toggle="modal" data-bs-target="#createCourseModal">
+        <button type="button" class="btn btn-primary d-flex align-items-center gap-2 rounded-3 shadow-sm px-3" data-bs-toggle="modal" data-bs-target="#createCourseModal">
             <i class="bi bi-journal-plus"></i>
             <span>Create New Course</span>
         </button>
@@ -27,13 +27,13 @@
                         <span class="badge bg-primary-soft text-primary border border-primary-subtle font-monospace px-2 py-1 fs-xs">
                             {{ course.code }}
                         </span>
-                        <span class="badge bg-dark-card border border-subtle text-muted rounded-pill fs-xxs">
+                        <span class="badge bg-dark-card border border-subtle text-slate-300 rounded-pill fs-xxs">
                             <i class="bi bi-person-fill text-primary me-1"></i> {{ course.faculty_name|default('Assigned to You') }}
                         </span>
                     </div>
 
                     <h4 class="h5 fw-bold text-white mb-2">{{ course.name }}</h4>
-                    <p class="text-muted fs-xs mb-3">{{ course.description|default('Core Computer Science curriculum course with laboratory evaluations.') }}</p>
+                    <p class="text-slate-300 fs-xs mb-3">{{ course.description|default('Core Computer Science curriculum course with laboratory evaluations.') }}</p>
 
                     <div class="p-3 rounded-3 bg-dark-glass border border-subtle mb-3">
                         <div class="d-flex justify-content-between align-items-center mb-1">
@@ -86,6 +86,7 @@
                 <button type="button" class="btn-close btn-close-white shadow-none" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <form id="createCourseForm" action="{{ url_for('frontend.create_course_action') }}" method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <div class="modal-body">
                     <div class="mb-3">
                         <label for="courseCode" class="form-label text-muted fs-xs text-uppercase fw-semibold">Course Code</label>

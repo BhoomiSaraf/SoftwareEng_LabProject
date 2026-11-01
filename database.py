@@ -152,6 +152,11 @@ def seed_initial_data(db_path=None):
     - 4 Core Courses (CSE3132, CSE3101, CSE3103, CSE3105)
     - Course enrollments
     """
+    from config import Config
+    if Config.IS_PRODUCTION:
+        # In production, never silently seed development default accounts
+        return
+
     from werkzeug.security import generate_password_hash
 
     with get_db_cursor(db_path) as cursor:

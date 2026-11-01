@@ -6,14 +6,14 @@
 <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-4">
     <div>
         <h2 class="h3 fw-bold mb-1">Faculty Dashboard</h2>
-        <p class="text-muted fs-sm mb-0">Overview of active attendance sessions, registered students, and courses</p>
+        <p class="text-slate-300 fs-sm mb-0">Overview of active attendance sessions, registered students, and courses</p>
     </div>
     <div class="d-flex gap-2">
-        <button type="button" class="btn btn-primary d-flex align-items-center gap-2 rounded-3 shadow-sm" data-bs-toggle="modal" data-bs-target="#startSessionModal">
+        <button type="button" class="btn btn-primary d-flex align-items-center gap-2 rounded-3 shadow-sm px-3" data-bs-toggle="modal" data-bs-target="#startSessionModal">
             <i class="bi bi-camera-video-fill"></i>
             <span>Start Attendance Session</span>
         </button>
-        <a href="{{ url_for('frontend.reports') }}" class="btn btn-tech-outline d-flex align-items-center gap-2 rounded-3">
+        <a href="{{ url_for('frontend.reports') }}" class="btn btn-tech-outline d-flex align-items-center gap-2 rounded-3 px-3">
             <i class="bi bi-download"></i>
             <span>Export Reports</span>
         </a>
@@ -123,26 +123,26 @@
                             <tr>
                                 <td>
                                     <div class="fw-semibold text-white">{{ sess.course_code }}</div>
-                                    <div class="text-muted fs-xs">{{ sess.course_name }}</div>
+                                    <div class="text-slate-300 fs-xs">{{ sess.course_name }}</div>
                                 </td>
                                 <td>
                                     <div class="text-white fs-sm">{{ sess.date }}</div>
-                                    <div class="text-muted fs-xs">{{ sess.start_time }}</div>
+                                    <div class="text-slate-300 fs-xs">{{ sess.start_time }}</div>
                                 </td>
                                 <td>
                                     {% if sess.status == 'ACTIVE' %}
                                     <span class="badge badge-soft-success rounded-pill px-2 py-1 fs-xs">
-                                        <i class="bi bi-record-fill me-1 text-danger animate-pulse"></i> LIVE
+                                         LIVE
                                     </span>
                                     {% else %}
-                                    <span class="badge bg-dark-card border border-subtle text-muted rounded-pill px-2 py-1 fs-xs">
+                                    <span class="badge bg-dark-card border border-subtle text-slate-300 rounded-pill px-2 py-1 fs-xs">
                                         Completed
                                     </span>
                                     {% endif %}
                                 </td>
                                 <td>
                                     <div class="fw-semibold text-white">{{ sess.present_count }} / {{ sess.total_enrolled }}</div>
-                                    <div class="progress mt-1" style="height: 4px; background: rgba(255,255,255,0.06);">
+                                    <div class="progress mt-1" style="height: 5px; background: rgba(255,255,255,0.08);">
                                         <div class="progress-bar bg-primary" role="progressbar" style="width: {{ sess.attendance_percentage }}%;" aria-valuenow="{{ sess.attendance_percentage }}" aria-valuemin="0" aria-valuemax="100"></div>
                                     </div>
                                 </td>
@@ -172,7 +172,7 @@
         </div>
     </div>
 
-    <!-- Quick Actions and System Integrity Info -->
+    <!-- Quick Actions -->
     <div class="col-lg-4">
         <div class="card-tech p-4 mb-4">
             <h4 class="h5 fw-bold mb-3 d-flex align-items-center gap-2">
@@ -185,7 +185,7 @@
                         <i class="bi bi-person-plus text-primary fs-5"></i>
                         <div>
                             <div class="fw-semibold text-white fs-sm">Manage &amp; Enroll Students</div>
-                            <div class="text-muted fs-xs">Register new roll numbers and face embeddings</div>
+                            <div class="text-slate-300 fs-xs">Register new roll numbers and face embeddings</div>
                         </div>
                     </div>
                     <i class="bi bi-chevron-right text-muted"></i>
@@ -196,7 +196,7 @@
                         <i class="bi bi-journal-plus text-info fs-5"></i>
                         <div>
                             <div class="fw-semibold text-white fs-sm">Course Rosters</div>
-                            <div class="text-muted fs-xs">Map enrolled students to your courses</div>
+                            <div class="text-slate-300 fs-xs">Map enrolled students to your courses</div>
                         </div>
                     </div>
                     <i class="bi bi-chevron-right text-muted"></i>
@@ -207,31 +207,12 @@
                         <i class="bi bi-filetype-csv text-success fs-5"></i>
                         <div>
                             <div class="fw-semibold text-white fs-sm">Attendance Reports &amp; CSV</div>
-                            <div class="text-muted fs-xs">Export lab evaluation records</div>
+                            <div class="text-slate-300 fs-xs">Export lab evaluation records</div>
                         </div>
                     </div>
                     <i class="bi bi-chevron-right text-muted"></i>
                 </a>
             </div>
-        </div>
-
-        <!-- Architectural Contract Compliance Card -->
-        <div class="card-tech p-4 border-subtle">
-            <h5 class="fw-bold mb-2 fs-sm text-uppercase text-muted tracking-wider">MVP Workflow Integrity</h5>
-            <ul class="list-unstyled mb-0 fs-xs text-muted d-flex flex-column gap-2">
-                <li class="d-flex align-items-center gap-2">
-                    <i class="bi bi-check-circle-fill text-success"></i>
-                    <span>Automatic duplicate attendance prevention</span>
-                </li>
-                <li class="d-flex align-items-center gap-2">
-                    <i class="bi bi-check-circle-fill text-success"></i>
-                    <span>Course enrollment pre-validation</span>
-                </li>
-                <li class="d-flex align-items-center gap-2">
-                    <i class="bi bi-check-circle-fill text-success"></i>
-                    <span>Backend-verified attendance timestamping</span>
-                </li>
-            </ul>
         </div>
     </div>
 </div>
@@ -247,6 +228,7 @@
                 <button type="button" class="btn-close btn-close-white shadow-none" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <form id="startSessionForm" action="{{ url_for('frontend.start_session_action') }}" method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <div class="modal-body">
                     <div class="mb-3">
                         <label for="courseSelect" class="form-label text-muted fs-xs text-uppercase fw-semibold">Select Course</label>

@@ -15,14 +15,43 @@ class FrontendAndReportingTestCase(unittest.TestCase):
         self.app.config['SECRET_KEY'] = 'test-secret-key'
         self.client = self.app.test_client()
 
-    def login_client(self):
-        """Helper to establish faculty session"""
+        # Extract CSRF token from page meta tag and attach to test client headers
+        res = self.client.get('/login')
+        import re
+        m = re.search(r'name="csrf-token" content="([^"]+)"', res.data.decode('utf-8'))
+        if m:
+            self.client.environ_base['HTTP_X_CSRFTOKEN'] = m.group(1)
+
+        # Reset session 101 to initial baseline attendance state and ensure CS301 roster has all baseline students
+        import database
+        conn = database.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM attendance_records WHERE session_id = '101' AND student_id NOT IN ('STU001', 'STU002', 'STU003');")
+        for sid in ['STU001', 'STU002', 'STU003', 'STU004', 'STU005', 'STU006']:
+            cursor.execute("INSERT OR IGNORE INTO enrollments (course_id, student_id) VALUES ('CS301', ?);", (sid,))
+        conn.commit()
+        conn.close()
+
+    def tearDown(self):
+        # Clean up test modifications
+        import database
+        conn = database.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM attendance_records WHERE session_id = '101' AND student_id NOT IN ('STU001', 'STU002', 'STU003');")
+        for sid in ['STU001', 'STU002', 'STU003', 'STU004', 'STU005', 'STU006']:
+            cursor.execute("INSERT OR IGNORE INTO enrollments (course_id, student_id) VALUES ('CS301', ?);", (sid,))
+        conn.commit()
+        conn.close()
+
+    def login_client(self, role='faculty', faculty_id='FAC001'):
+        """Helper to establish authenticated session"""
         with self.client.session_transaction() as sess:
             sess['user'] = {
                 'id': 1,
                 'name': 'Dr. Alan Turing',
                 'email': 'faculty@college.edu',
-                'role': 'Faculty'
+                'role': role,
+                'faculty_id': faculty_id
             }
 
     def test_unauthenticated_redirect(self):
@@ -94,6 +123,7 @@ class FrontendAndReportingTestCase(unittest.TestCase):
 
     def test_face_registration_api(self):
         """Student face biometric registration endpoint updates student record"""
+        self.login_client()
         payload = {'image': 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD...'}
         response = self.client.post('/api/students/1/register-face', json=payload)
         self.assertEqual(response.status_code, 200)
@@ -102,6 +132,7 @@ class FrontendAndReportingTestCase(unittest.TestCase):
 
     def test_course_enrollment_api(self):
         """Updating course roster updates enrolled IDs"""
+        self.login_client()
         payload = {'student_ids': [1, 2, 3, 4]}
         response = self.client.post('/api/courses/1/enroll', json=payload)
         self.assertEqual(response.status_code, 200)
@@ -110,6 +141,7 @@ class FrontendAndReportingTestCase(unittest.TestCase):
 
     def test_duplicate_attendance_prevention_contract(self):
         """Marking manual attendance prevents duplicate entries in the same session"""
+        self.login_client()
         # Mark student 6 for first time
         resp1 = self.client.post('/api/sessions/101/mark-manual', json={'student_id': 6})
         self.assertEqual(resp1.status_code, 200)
@@ -124,6 +156,7 @@ class FrontendAndReportingTestCase(unittest.TestCase):
 
     def test_csv_export_format(self):
         """CSV export endpoint returns text/csv with correct headers"""
+        self.login_client()
         response = self.client.get('/api/reports/export-csv?course_id=CS301')
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.mimetype, 'text/csv')
