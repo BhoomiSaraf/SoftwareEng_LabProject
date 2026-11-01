@@ -140,7 +140,7 @@ class FaceRecognitionService:
         Returns:
             Tuple of (is_available: bool, status_message: str)
         """
-        cap = cv2.VideoCapture(device_index)
+        cap = self._create_capture(device_index)
         if not cap.isOpened():
             cap.release()
             return False, f"Webcam device {device_index} is unavailable or in use by another application."
@@ -153,6 +153,20 @@ class FaceRecognitionService:
         h, w = frame.shape[:2]
         return True, f"Webcam device {device_index} is functional (resolution: {w}x{h})."
 
+    def _create_capture(self, device_index: int = 0) -> cv2.VideoCapture:
+        """
+        Create a cv2.VideoCapture instance, trying DirectShow on Windows for reliable hardware access.
+        """
+        import sys
+        if sys.platform.startswith("win") or os.name == "nt":
+            try:
+                cap = cv2.VideoCapture(device_index, cv2.CAP_DSHOW)
+                if cap.isOpened():
+                    return cap
+            except Exception:
+                pass
+        return cv2.VideoCapture(device_index)
+
     def open_webcam(self, device_index: int = 0) -> Tuple[bool, Optional[cv2.VideoCapture], str]:
         """
         Open a continuous OpenCV video capture stream.
@@ -164,7 +178,7 @@ class FaceRecognitionService:
             Tuple of (success: bool, VideoCapture object or None, status_message: str)
         """
         try:
-            cap = cv2.VideoCapture(device_index)
+            cap = self._create_capture(device_index)
             if not cap.isOpened():
                 return False, None, f"Could not open webcam index {device_index}."
             return True, cap, f"Webcam index {device_index} opened successfully."
@@ -200,7 +214,7 @@ class FaceRecognitionService:
         Returns:
             Tuple of (success: bool, frame (BGR np.ndarray) or None, status_message: str)
         """
-        cap = cv2.VideoCapture(device_index)
+        cap = self._create_capture(device_index)
         if not cap.isOpened():
             cap.release()
             return False, None, f"Camera index {device_index} unavailable."

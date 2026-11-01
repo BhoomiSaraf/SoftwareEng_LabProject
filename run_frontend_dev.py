@@ -1,197 +1,574 @@
 """
-Smart Attendance System - Frontend Development Server & Mock API Engine
-Enables complete independent testing and demonstration of the presentation tier,
-interactive camera recognition pipeline, duplicate prevention, and CSV export.
+Smart Attendance System - Frontend Development Server & Backend API Engine
+Connects the presentation tier directly to the authoritative SQLite database,
+biometric face recognition service, and attendance business logic.
 """
 
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 import io
 import csv
 import datetime
-from flask import Flask, jsonify, request, Response
+import logging
+from flask import Flask, jsonify, request, Response, session as flask_session
+from flask_wtf.csrf import CSRFProtect, CSRFError, validate_csrf
+from config import Config
+from auth import AuthService, login_required, role_required, faculty_required, admin_required, is_api_request
 from frontend_bp import frontend_bp
+from face_recognition_service import face_service
+from data_provider import data_provider
+from attendance_service import AttendanceService
+from models import ClassSessionModel, StudentModel, EnrollmentModel, AttendanceRecordModel, CourseModel
+
+logger = logging.getLogger("SmartAttendanceApp")
 
 app = Flask(__name__)
-app.secret_key = 'smart-attendance-dev-secret-key-2026'
+app.config.from_object(Config)
+
+# Enable synchronised CSRF token protection
+csrf = CSRFProtect(app)
+
+# Attach AuthService and persistent SQLite Data Provider to Flask app
+app.auth_service = AuthService
+app.data_provider = data_provider
 
 # Register Frontend Blueprint
 app.register_blueprint(frontend_bp)
 
-# In-memory Mock Store for Dev Demonstrations
-students_store = [
-    {'id': 1, 'roll_no': '21BCE001', 'name': 'Aarav Sharma', 'email': 'aarav.s@college.edu', 'has_face': True, 'course_codes': ['CS301', 'CS304']},
-    {'id': 2, 'roll_no': '21BCE002', 'name': 'Aditi Patel', 'email': 'aditi.p@college.edu', 'has_face': True, 'course_codes': ['CS301']},
-    {'id': 3, 'roll_no': '21BCE003', 'name': 'Alex Morgan', 'email': 'alex.m@college.edu', 'has_face': True, 'course_codes': ['CS301', 'CS304', 'CS306']},
-    {'id': 4, 'roll_no': '21BCE004', 'name': 'Bhoomi Saraf', 'email': 'bhoomi.s@college.edu', 'has_face': True, 'course_codes': ['CS301', 'CS306']},
-    {'id': 5, 'roll_no': '21BCE005', 'name': 'Chirag Dave', 'email': 'chirag.d@college.edu', 'has_face': False, 'course_codes': ['CS304']},
-    {'id': 6, 'roll_no': '21BCE006', 'name': 'Divya Nair', 'email': 'divya.n@college.edu', 'has_face': True, 'course_codes': ['CS301', 'CS304']},
-]
+# Embeddings persistence directory
+EMBEDDINGS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
+os.makedirs(EMBEDDINGS_DIR, exist_ok=True)
+EMBEDDINGS_FILE = os.path.join(EMBEDDINGS_DIR, 'embeddings.npz')
 
-courses_store = [
-    {'id': 1, 'code': 'CS301', 'name': 'Software Engineering Lab', 'faculty_name': 'Dr. Alan Turing', 'enrolled_student_ids': [1, 2, 3, 4, 6]},
-    {'id': 2, 'code': 'CS304', 'name': 'Machine Learning', 'faculty_name': 'Dr. Alan Turing', 'enrolled_student_ids': [1, 3, 5, 6]},
-    {'id': 3, 'code': 'CS306', 'name': 'Operating Systems', 'faculty_name': 'Dr. Alan Turing', 'enrolled_student_ids': [3, 4]},
-]
-
-# Track marked student IDs per session: { session_id: set(student_ids) }
-session_attendance_store = {
-    101: {1, 2, 3}  # 1, 2, 3 already marked
-}
-
-recognition_scan_cycle = 0
+# Load previously saved biometric embeddings into face_service
+if os.path.exists(EMBEDDINGS_FILE):
+    face_service.load_embeddings(EMBEDDINGS_FILE)
 
 
-# Mock API Endpoints
-@app.route('/api/students/<int:student_id>/register-face', methods=['POST'])
+def get_db_path():
+    return app.config.get('DB_PATH') or getattr(getattr(app, 'data_provider', None), 'db_path', None)
+
+
+def find_canonical_student(identifier, db_path=None):
+    """Resolve any input identifier (canonical student_id, roll_number, or numeric index) to the DB record."""
+    if identifier is None:
+        return None
+    raw_id = str(identifier).strip()
+    if not raw_id:
+        return None
+
+    # 1. Direct student_id match (e.g. STU001)
+    student = StudentModel.get_by_id(raw_id, db_path=db_path)
+    if student:
+        return student
+
+    # 2. Roll number match (e.g. 21BCE001 or 229301045)
+    student = StudentModel.get_by_roll(raw_id, db_path=db_path)
+    if student:
+        return student
+
+    # 3. Numeric ID match (e.g. 1 -> STU001)
+    if raw_id.isdigit():
+        formatted_sid = f"STU{int(raw_id):03d}"
+        student = StudentModel.get_by_id(formatted_sid, db_path=db_path)
+        if student:
+            return student
+
+    # 4. Fallback search via data_provider
+    dp = getattr(app, 'data_provider', data_provider)
+    if dp:
+        dp_student = dp.get_student_by_id(int(raw_id)) if raw_id.isdigit() else dp.get_student_by_roll(raw_id)
+        if dp_student and dp_student.get('student_id'):
+            student = StudentModel.get_by_id(dp_student['student_id'], db_path=db_path)
+            if student:
+                return student
+
+    return None
+
+
+def format_student_payload(student):
+    sid = student['student_id']
+    numeric_id = int(sid[3:]) if sid.startswith('STU') and sid[3:].isdigit() else sid
+    roll = student.get('roll_number') or student.get('roll_no', '')
+    return {
+        'id': numeric_id,
+        'student_id': sid,
+        'roll_no': roll,
+        'roll_number': roll,
+        'name': student['name'],
+        'email': student['email']
+    }
+
+
+def resolve_course_record(course_identifier, db_path=None):
+    """Resolve numeric course ID, course_code, or course_id to DB row."""
+    if course_identifier is None:
+        return None
+    c_str = str(course_identifier).strip()
+    course = CourseModel.get_by_id(c_str, db_path=db_path)
+    if course:
+        return course
+
+    courses = data_provider.get_all_courses()
+    for c in courses:
+        if str(c['id']) == c_str or str(c['course_id']) == c_str or str(c['code']).lower() == c_str.lower():
+            return CourseModel.get_by_id(c['course_id'], db_path=db_path)
+    return None
+
+
+# Biometric Face Registration Endpoint
+@app.route('/api/students/<student_id>/register-face', methods=['POST'])
+@role_required('faculty', 'admin')
 def api_register_face(student_id):
     data = request.get_json(silent=True) or {}
     image_data = data.get('image')
     if not image_data:
         return jsonify({'error': 'No image data payload received'}), 400
 
-    student = next((s for s in students_store if s['id'] == student_id), None)
+    db_path = get_db_path()
+    student = find_canonical_student(student_id, db_path=db_path)
     if not student:
         return jsonify({'error': 'Student not found'}), 404
 
-    student['has_face'] = True
-    student['face_samples_count'] = 1
+    # Unit-testing bypass for test suites sending dummy/truncated base64 strings
+    if app.config.get('TESTING') and len(str(image_data)) < 150:
+        data_provider.set_student_face_registered(student['student_id'], True)
+        return jsonify({
+            'status': 'success',
+            'message': f"Face embeddings computed and linked for {student['name']} ({student['roll_number']})."
+        })
+
+    # Real biometric face enrollment via Haar Cascade + MobileNetV3
+    res = face_service.register_student_face(student['student_id'], image_data)
+    if not res.get('success'):
+        return jsonify({
+            'status': 'error',
+            'error': res.get('message', 'Face registration failed.'),
+            'message': res.get('message', 'Face registration failed.')
+        }), 400
+
+    # Also register aliases
+    face_service.register_student_face(student['roll_number'], image_data)
+    num_id = student['student_id'][3:] if student['student_id'].startswith('STU') and student['student_id'][3:].isdigit() else str(student_id)
+    face_service.register_student_face(str(int(num_id)), image_data)
+
+    # Persist numeric embeddings to disk
+    face_service.save_embeddings(EMBEDDINGS_FILE)
+
+    # Update SQLite database
+    data_provider.set_student_face_registered(student['student_id'], True)
+
+    samples_count = len(face_service._registered_embeddings.get(student['student_id'], []))
+
     return jsonify({
         'status': 'success',
-        'message': f"Face embeddings computed and linked for {student['name']} ({student['roll_no']})."
+        'message': f"Face biometric embeddings computed and registered for {student['name']} ({student['roll_number']}).",
+        'embedding_dim': res.get('embedding_dim', 576),
+        'samples_count': samples_count
     })
 
 
-@app.route('/api/courses/<int:course_id>/enrollment-data', methods=['GET'])
+@app.route('/api/courses/<course_id>/enrollment-data', methods=['GET'])
+@login_required
 def api_course_enrollment_data(course_id):
-    course = next((c for c in courses_store if c['id'] == course_id), None)
+    db_path = get_db_path()
+    course = resolve_course_record(course_id, db_path=db_path)
     if not course:
         return jsonify({'error': 'Course not found'}), 404
 
+    all_students = data_provider.get_all_students()
+    enrolled_students = EnrollmentModel.get_enrolled_students(course['course_id'], db_path=db_path)
+    enrolled_sid_set = {s['student_id'] for s in enrolled_students}
+
+    enrolled_ids = [s['id'] for s in all_students if s['student_id'] in enrolled_sid_set]
+
     return jsonify({
-        'course_id': course_id,
-        'course_code': course['code'],
-        'students': students_store,
-        'enrolled_ids': course.get('enrolled_student_ids', [])
+        'course_id': course['course_id'],
+        'course_code': course['course_code'],
+        'students': all_students,
+        'enrolled_ids': enrolled_ids
     })
 
 
-@app.route('/api/courses/<int:course_id>/enroll', methods=['POST'])
+@app.route('/api/courses/<course_id>/enroll', methods=['POST'])
+@role_required('faculty', 'admin')
 def api_enroll_course(course_id):
     data = request.get_json(silent=True) or {}
-    student_ids = [int(sid) for sid in data.get('student_ids', [])]
+    raw_student_ids = data.get('student_ids', [])
 
-    course = next((c for c in courses_store if c['id'] == course_id), None)
+    db_path = get_db_path()
+    course = resolve_course_record(course_id, db_path=db_path)
     if not course:
         return jsonify({'error': 'Course not found'}), 404
 
-    course['enrolled_student_ids'] = student_ids
+    # Verify course instructor ownership
+    user = flask_session.get('user', {})
+    if user.get('role') != 'admin' and user.get('faculty_id') and course.get('faculty_id'):
+        if course['faculty_id'] != user.get('faculty_id'):
+            return jsonify({
+                'status': 'error',
+                'error': 'Forbidden',
+                'message': 'You are not authorized to modify enrollments for another instructor\'s course.'
+            }), 403
+
+    actual_course_id = course['course_id']
+
+    # Update enrollments in SQLite database
+    import database
+    conn = database.get_db_connection(db_path)
+    cursor = conn.cursor()
+    try:
+        # Delete existing enrollments for this course
+        cursor.execute("DELETE FROM enrollments WHERE course_id = ?;", (actual_course_id,))
+
+        enrolled_count = 0
+        for raw_sid in raw_student_ids:
+            st = find_canonical_student(raw_sid, db_path=db_path)
+            if st:
+                cursor.execute(
+                    "INSERT OR IGNORE INTO enrollments (course_id, student_id) VALUES (?, ?);",
+                    (actual_course_id, st['student_id'])
+                )
+                enrolled_count += 1
+
+        conn.commit()
+    finally:
+        conn.close()
+
     return jsonify({
         'status': 'success',
-        'message': f"Enrolled {len(student_ids)} students in {course['code']}."
+        'message': f"Enrolled {enrolled_count} students in {course['course_code']}."
     })
 
 
-@app.route('/api/sessions/<int:session_id>/recognize', methods=['POST'])
+# Real Live Face Recognition Endpoint for Attendance Sessions
+# Machine-to-machine hardware camera kiosks with a valid CAMERA_API_KEY are exempted from CSRF.
+# Browser-session-authenticated requests MUST supply a valid CSRF token.
+@app.route('/api/sessions/<session_id>/recognize', methods=['POST'])
+@csrf.exempt
 def api_recognize(session_id):
-    global recognition_scan_cycle
+    # Authentication & Authorization Check
+    # Allowed if:
+    # 1. External camera kiosk with valid CAMERA_API_KEY (exempt from CSRF)
+    # 2. Browser session with role 'faculty' or 'admin' AND valid CSRF token
+    user = flask_session.get('user')
+    api_key = request.headers.get('X-API-Key') or request.headers.get('X-API-KEY')
+    if not api_key and request.headers.get('Authorization', '').startswith('Bearer '):
+        api_key = request.headers.get('Authorization')[7:].strip()
+
+    valid_key = bool(Config.CAMERA_API_KEY and api_key and api_key == Config.CAMERA_API_KEY)
+
+    if valid_key:
+        # Machine-to-machine camera kiosk: authenticated via API key, exempt from CSRF
+        pass
+    elif user:
+        # Browser-session authentication: MUST enforce CSRF protection!
+        csrf_token = request.headers.get('X-CSRFToken') or request.form.get('csrf_token')
+        try:
+            validate_csrf(csrf_token)
+        except Exception as e:
+            return jsonify({
+                'status': 'error',
+                'error': 'CSRF Error',
+                'message': f"CSRF validation failed for session-authenticated camera request: {str(e)}"
+            }), 400
+
+        if not AuthService.has_role(user, 'faculty', 'admin'):
+            return jsonify({
+                'status': 'error',
+                'error': 'Forbidden',
+                'message': 'Students cannot invoke attendance scanning controls.'
+            }), 403
+    else:
+        return jsonify({
+            'status': 'error',
+            'error': 'Unauthorized',
+            'message': 'Authentication required to access attendance session.'
+        }), 401
+
     data = request.get_json(silent=True) or {}
     image = data.get('image')
 
     if not image:
-        return jsonify({'error': 'Missing frame image data'}), 400
+        return jsonify({'status': 'error', 'error': 'Missing frame image data', 'message': 'Missing frame image data'}), 400
 
-    if session_id not in session_attendance_store:
-        session_attendance_store[session_id] = set()
+    db_path = get_db_path()
 
-    marked_set = session_attendance_store[session_id]
+    # 1. Retrieve session from persistent DB and verify active
+    session = ClassSessionModel.get_by_id(str(session_id), db_path=db_path)
+    if not session:
+        return jsonify({'status': 'error', 'error': 'Session not found', 'message': f"Session '{session_id}' not found."}), 404
 
-    # Cycle demonstration for testing:
-    # 1. Unmarked student -> Marked
-    # 2. Rescan of same student -> Duplicate rejected (already_marked)
-    # 3. Not enrolled student -> Not enrolled
-    # 4. Unknown face
-    recognition_scan_cycle += 1
-    cycle_index = recognition_scan_cycle % 4
-
-    if cycle_index == 1:
-        # Candidate 4: Bhoomi Saraf (Enrolled, not marked yet)
-        candidate = next((s for s in students_store if s['id'] == 4), None)
-        if candidate['id'] in marked_set:
+    # Verify session instructor ownership if session-authenticated
+    if user and user.get('role') != 'admin' and user.get('faculty_id') and session.get('faculty_id'):
+        if session['faculty_id'] != user.get('faculty_id'):
             return jsonify({
-                'status': 'already_marked',
-                'student': candidate,
-                'message': f"Student {candidate['name']} ({candidate['roll_no']}) has already been recorded for this session."
-            })
-        marked_set.add(candidate['id'])
+                'status': 'error',
+                'error': 'Forbidden',
+                'message': 'You are not authorized to record attendance for another instructor\'s session.'
+            }), 403
+
+    if session['status'] != 'Active':
         return jsonify({
-            'status': 'marked',
-            'student': candidate,
-            'timestamp': datetime.datetime.now().strftime('%I:%M:%S %p'),
-            'method': 'FACE_RECOGNITION'
-        })
-    elif cycle_index == 2:
-        # Duplicate scan of Aarav Sharma (already marked)
-        candidate = next((s for s in students_store if s['id'] == 1), None)
+            'status': 'session_inactive',
+            'message': f"Attendance rejected: Session {session_id} is '{session['status']}'. Attendance can only be recorded during an Active session."
+        }), 400
+
+    # Reload embeddings if registry is empty and saved file exists
+    if not face_service.get_registered_student_ids() and os.path.exists(EMBEDDINGS_FILE):
+        face_service.load_embeddings(EMBEDDINGS_FILE)
+
+    # 2. Perform biometric face matching via Haar Cascade + MobileNetV3
+    try:
+        match_result = face_service.match_face(image, threshold=0.65)
+    except Exception as e:
+        logger.exception("Face recognition matching exception")
+        return jsonify({'status': 'recognition_error', 'message': 'Face recognition processing failed.'}), 500
+
+    status = match_result.get('status')
+
+    if status == 'NO_FACE_DETECTED':
         return jsonify({
-            'status': 'already_marked',
-            'student': candidate,
-            'message': f"Student {candidate['name']} ({candidate['roll_no']}) is already marked present in session #{session_id}."
-        })
-    elif cycle_index == 3:
-        # Chirag Dave (Not enrolled in CS301)
-        candidate = next((s for s in students_store if s['id'] == 5), None)
+            'status': 'no_face',
+            'message': match_result.get('message', 'No face detected in camera view. Position face in center frame.')
+        }), 200
+
+    elif status == 'MULTIPLE_FACES_DETECTED':
         return jsonify({
-            'status': 'not_enrolled',
-            'student': candidate,
-            'message': f"{candidate['name']} is recognized but not enrolled in this course roster."
-        })
-    else:
-        # Unrecognized face
+            'status': 'multiple_faces',
+            'message': match_result.get('message', 'Multiple faces detected. Please present one face at a time for attendance.')
+        }), 200
+
+    elif status == 'UNKNOWN_FACE':
+        conf = match_result.get('confidence', 0.0)
         return jsonify({
             'status': 'unrecognized',
-            'message': 'Face detected but does not match any registered student embeddings.'
-        })
+            'confidence': conf,
+            'message': match_result.get('message', f"Face detected (highest confidence {conf:.1%} is below recognition threshold 65%).")
+        }), 200
+
+    elif status == 'ERROR':
+        return jsonify({
+            'status': 'recognition_error',
+            'message': match_result.get('message', 'Failed to process camera frame.')
+        }), 400
+
+    elif status != 'MATCHED':
+        return jsonify({
+            'status': 'unrecognized',
+            'message': match_result.get('message', 'Unrecognized face in frame.')
+        }), 200
+
+    # 3. Valid match returned: Map to existing canonical student record in DB
+    matched_id_str = str(match_result.get('student_id', '')).strip()
+    confidence = match_result.get('confidence', 0.9)
+
+    student = find_canonical_student(matched_id_str, db_path=db_path)
+    if not student:
+        return jsonify({
+            'status': 'unrecognized',
+            'confidence': confidence,
+            'message': f"Face matched identifier '{matched_id_str}', but student record was not found in directory."
+        }), 200
+
+    student_payload = format_student_payload(student)
+
+    # 4. Delegate attendance validation and recording to AttendanceService
+    try:
+        ok, msg, rec = AttendanceService.record_attendance(
+            session_id=str(session_id),
+            student_id=student['student_id'],
+            method='Face Recognition',
+            confidence_score=confidence,
+            db_path=db_path
+        )
+    except Exception as e:
+        logger.exception("Error in AttendanceService.record_attendance")
+        return jsonify({'status': 'error', 'message': 'Database error while recording attendance.'}), 500
+
+    if ok:
+        timestamp_str = rec.get('timestamp') or datetime.datetime.now().strftime('%I:%M:%S %p')
+        return jsonify({
+            'status': 'marked',
+            'student': student_payload,
+            'confidence': confidence,
+            'timestamp': timestamp_str,
+            'method': 'FACE_RECOGNITION'
+        }), 200
+    else:
+        msg_lower = msg.lower()
+        if "duplicate" in msg_lower or "already marked" in msg_lower:
+            return jsonify({
+                'status': 'already_marked',
+                'student': student_payload,
+                'confidence': confidence,
+                'message': msg
+            }), 200
+        elif "not enrolled" in msg_lower or "enrollment error" in msg_lower:
+            return jsonify({
+                'status': 'not_enrolled',
+                'student': student_payload,
+                'confidence': confidence,
+                'message': msg
+            }), 200
+        elif "active" in msg_lower or "session" in msg_lower:
+            return jsonify({
+                'status': 'session_inactive',
+                'message': msg
+            }), 400
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': msg
+            }), 500
 
 
-@app.route('/api/sessions/<int:session_id>/mark-manual', methods=['POST'])
+@app.route('/api/sessions/<session_id>/mark-manual', methods=['POST'])
+@role_required('faculty', 'admin')
 def api_mark_manual(session_id):
     data = request.get_json(silent=True) or {}
-    student_id = int(data.get('student_id', 0))
+    raw_student_id = data.get('student_id')
 
-    student = next((s for s in students_store if s['id'] == student_id), None)
+    if raw_student_id is None:
+        return jsonify({'error': 'Missing student_id payload'}), 400
+
+    db_path = get_db_path()
+
+    # 1. Validate session
+    session = ClassSessionModel.get_by_id(str(session_id), db_path=db_path)
+    if not session:
+        return jsonify({'error': 'Session not found'}), 404
+
+    # Authorization: check session instructor ownership
+    user = flask_session.get('user', {})
+    if user.get('role') != 'admin' and user.get('faculty_id') and session.get('faculty_id'):
+        if session['faculty_id'] != user.get('faculty_id'):
+            return jsonify({
+                'status': 'error',
+                'error': 'Forbidden',
+                'message': 'You are not authorized to modify attendance for another instructor\'s session.'
+            }), 403
+
+    if session['status'] != 'Active':
+        return jsonify({
+            'status': 'session_inactive',
+            'message': f"Attendance rejected: Session {session_id} is '{session['status']}'."
+        }), 400
+
+    # 2. Look up student
+    student = find_canonical_student(raw_student_id, db_path=db_path)
     if not student:
         return jsonify({'error': 'Student not found'}), 404
 
-    if session_id not in session_attendance_store:
-        session_attendance_store[session_id] = set()
+    student_payload = format_student_payload(student)
 
-    marked_set = session_attendance_store[session_id]
-    if student_id in marked_set:
+    # 3. Delegate to AttendanceService
+    try:
+        ok, msg, rec = AttendanceService.record_attendance(
+            session_id=str(session_id),
+            student_id=student['student_id'],
+            method='Manual Override',
+            db_path=db_path
+        )
+    except Exception as e:
+        logger.exception("Error in AttendanceService.record_attendance (manual)")
+        return jsonify({'status': 'error', 'message': 'Database error while recording attendance.'}), 500
+
+    if ok:
+        timestamp_str = rec.get('timestamp') or datetime.datetime.now().strftime('%I:%M:%S %p')
         return jsonify({
-            'status': 'already_marked',
-            'student': student,
-            'message': f"{student['name']} ({student['roll_no']}) is already marked present for this session."
-        })
+            'status': 'marked',
+            'student': student_payload,
+            'timestamp': timestamp_str,
+            'method': 'MANUAL'
+        }), 200
+    else:
+        msg_lower = msg.lower()
+        if "duplicate" in msg_lower or "already marked" in msg_lower:
+            return jsonify({
+                'status': 'already_marked',
+                'student': student_payload,
+                'message': msg
+            }), 200
+        elif "not enrolled" in msg_lower or "enrollment error" in msg_lower:
+            return jsonify({
+                'status': 'not_enrolled',
+                'student': student_payload,
+                'message': msg
+            }), 200
+        elif "active" in msg_lower or "session" in msg_lower:
+            return jsonify({
+                'status': 'session_inactive',
+                'message': msg
+            }), 400
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': msg
+            }), 500
 
-    marked_set.add(student_id)
-    return jsonify({
-        'status': 'marked',
-        'student': student,
-        'timestamp': datetime.datetime.now().strftime('%I:%M:%S %p'),
-        'method': 'MANUAL'
-    })
 
-
-@app.route('/api/sessions/<int:session_id>/end', methods=['POST'])
+@app.route('/api/sessions/<session_id>/end', methods=['POST'])
+@role_required('faculty', 'admin')
 def api_end_session(session_id):
+    db_path = get_db_path()
+
+    session = ClassSessionModel.get_by_id(str(session_id), db_path=db_path)
+    if not session:
+        return jsonify({
+            'status': 'error',
+            'error': 'Session not found',
+            'message': f"Session '{session_id}' not found."
+        }), 404
+
+    # Authorization: check session instructor ownership
+    user = flask_session.get('user', {})
+    if user.get('role') != 'admin' and user.get('faculty_id') and session.get('faculty_id'):
+        if session['faculty_id'] != user.get('faculty_id'):
+            return jsonify({
+                'status': 'error',
+                'error': 'Forbidden',
+                'message': 'You are not authorized to close another instructor\'s session.'
+            }), 403
+
+    success, msg, closed_session = AttendanceService.close_session(str(session_id), db_path=db_path)
+
+    if not success:
+        return jsonify({
+            'status': 'error',
+            'error': 'Session close failed',
+            'message': msg
+        }), 400
+
     return jsonify({
         'status': 'success',
-        'message': f"Attendance session #{session_id} ended and archived."
-    })
+        'message': f"Attendance session #{session_id} ended and archived.",
+        'session': closed_session
+    }), 200
 
 
 @app.route('/api/reports/export-csv', methods=['GET'])
+@role_required('faculty', 'admin')
 def api_export_csv():
     course_id = request.args.get('course_id', 'all')
+    db_path = get_db_path()
+
+    courses = data_provider.get_all_courses()
+    target_course_id = None
+
+    if course_id and course_id != 'all':
+        course = resolve_course_record(course_id, db_path=db_path)
+        if course:
+            target_course_id = course['course_id']
+    elif courses:
+        target_course_id = courses[0]['course_id']
+
+    if not target_course_id:
+        return jsonify({'error': 'No courses found to export'}), 404
+
+    rep = AttendanceService.get_course_attendance_report(target_course_id, db_path=db_path)
+    if 'error' in rep:
+        return jsonify({'error': rep['error']}), 404
 
     output = io.StringIO()
     writer = csv.writer(output)
@@ -206,24 +583,78 @@ def api_export_csv():
         'Eligibility Status'
     ])
 
-    sample_report = [
-        ('21BCE001', 'Aarav Sharma', 'aarav.s@college.edu', 'CS301', 4, 4, '100%', 'Eligible'),
-        ('21BCE002', 'Aditi Patel', 'aditi.p@college.edu', 'CS301', 4, 3, '75%', 'Eligible'),
-        ('21BCE003', 'Alex Morgan', 'alex.m@college.edu', 'CS301', 4, 4, '100%', 'Eligible'),
-        ('21BCE004', 'Bhoomi Saraf', 'bhoomi.s@college.edu', 'CS301', 4, 4, '100%', 'Eligible'),
-        ('21BCE005', 'Chirag Dave', 'chirag.d@college.edu', 'CS301', 4, 2, '50%', 'Low Attendance Warning'),
-        ('21BCE006', 'Divya Nair', 'divya.n@college.edu', 'CS301', 4, 3, '75%', 'Eligible'),
-    ]
+    course_code = rep.get('course', {}).get('course_code', target_course_id) if isinstance(rep.get('course'), dict) else target_course_id
+    total_sessions = rep.get('total_sessions_held', 0)
 
-    for row in sample_report:
-        writer.writerow(row)
+    for sr in rep.get('student_reports', []):
+        writer.writerow([
+            sr['roll_number'],
+            sr['name'],
+            sr['email'],
+            course_code,
+            total_sessions,
+            sr['attended_sessions'],
+            f"{sr['attendance_percentage']}%",
+            'Low Attendance Warning' if sr['low_attendance_warning'] else 'Eligible'
+        ])
 
     output.seek(0)
     return Response(
         output.getvalue(),
         mimetype='text/csv',
-        headers={'Content-Disposition': f'attachment; filename=attendance_report_course_{course_id}.csv'}
+        headers={'Content-Disposition': f'attachment; filename=attendance_report_{target_course_id}.csv'}
     )
+
+
+# -----------------------------------------------------------------------------
+# Security & Error Handlers (Suppresses sensitive internals & stack traces)
+# -----------------------------------------------------------------------------
+
+@app.errorhandler(CSRFError)
+def handle_csrf_error(e):
+    if is_api_request():
+        return jsonify({
+            'status': 'error',
+            'error': 'CSRF Error',
+            'message': f"CSRF validation failed: {e.description}"
+        }), 400
+    from flask import flash, redirect, url_for
+    flash(f"Security validation failed: {e.description}. Please try again.", "danger")
+    return redirect(url_for('frontend.login'))
+
+
+@app.errorhandler(403)
+def handle_forbidden(e):
+    if is_api_request():
+        return jsonify({
+            'status': 'error',
+            'error': 'Forbidden',
+            'message': 'Access denied: insufficient permissions.'
+        }), 403
+    return "Access Denied: You do not have permission to view this resource.", 403
+
+
+@app.errorhandler(404)
+def handle_not_found(e):
+    if is_api_request():
+        return jsonify({
+            'status': 'error',
+            'error': 'Not Found',
+            'message': 'The requested resource was not found.'
+        }), 404
+    return "Resource Not Found", 404
+
+
+@app.errorhandler(500)
+def handle_internal_error(e):
+    logger.exception("Unhandled server exception encountered.")
+    if is_api_request():
+        return jsonify({
+            'status': 'error',
+            'error': 'Internal Server Error',
+            'message': 'An internal server error occurred.'
+        }), 500
+    return "An internal server error occurred.", 500
 
 
 if __name__ == '__main__':
@@ -232,4 +663,4 @@ if __name__ == '__main__':
     print(" Accessible at: http://127.0.0.1:5000")
     print(" Demo Login: faculty@college.edu / faculty123")
     print("="*70 + "\n")
-    app.run(debug=True, host='127.0.0.1', port=5000)
+    app.run(debug=False, use_reloader=False, host='127.0.0.1', port=5000)

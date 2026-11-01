@@ -116,3 +116,227 @@ csv_content = AttendanceService.generate_csv_report(course_id="CRS-CSE3132")
 | `enrollments` | `enrollment_id` | `course_id`, `student_id`, `UNIQUE(course_id, student_id)` |
 | `class_sessions` | `session_id` | `course_id`, `faculty_id`, `status` (`'Active'`, `'Completed'`) |
 | `attendance_records` | `attendance_id` | `session_id`, `student_id`, `course_id`, **`UNIQUE(session_id, student_id)`** |
+
+---
+
+## 4. Live Session Attendance HTTP API (Consolidated Backend Specification)
+
+The live session attendance endpoints in `run_frontend_dev.py` delegate all eligibility checks, session lifecycle validations, and duplicate prevention directly to `AttendanceService` and the persistent SQLite database.
+
+### 4.1 Live Face Recognition Attendance
+- **Route:** `POST /api/sessions/<session_id>/recognize`
+- **Request Body:**
+  ```json
+  {
+    "image": "data:image/jpeg;base64,..."
+  }
+  ```
+- **Responses:**
+  - **Marked Present (`200 OK`):**
+    ```json
+    {
+      "status": "marked",
+      "student": {
+        "id": 1,
+        "student_id": "STU001",
+        "roll_no": "229301045",
+        "name": "Bhoomi Saraf",
+        "email": "bhoomi.229301045@muj.manipal.edu"
+      },
+      "confidence": 0.942,
+      "timestamp": "09:05:12 AM",
+      "method": "FACE_RECOGNITION"
+    }
+    ```
+  - **Duplicate Attempt Blocked (`200 OK`):**
+    ```json
+    {
+      "status": "already_marked",
+      "student": { ... },
+      "confidence": 0.942,
+      "message": "Duplicate attendance blocked: Bhoomi Saraf (229301045) is already marked 'Present' for session SES-..."
+    }
+    ```
+  - **Not Enrolled in Course (`200 OK`):**
+    ```json
+    {
+      "status": "not_enrolled",
+      "student": { ... },
+      "confidence": 0.92,
+      "message": "Enrollment Error: Kabir Verma (229301275) is not enrolled in course CSE3101."
+    }
+    ```
+  - **Unrecognized Face (`200 OK`):**
+    ```json
+    {
+      "status": "unrecognized",
+      "confidence": 0.45,
+      "message": "Face detected (highest confidence 45.0% is below recognition threshold 65%)."
+    }
+    ```
+  - **No Face in View (`200 OK`):**
+    ```json
+    {
+      "status": "no_face",
+      "message": "No face detected in camera view. Position face in center frame."
+    }
+    ```
+  - **Multiple Faces in View (`200 OK`):**
+    ```json
+    {
+      "status": "multiple_faces",
+      "message": "Multiple faces detected. Please present one face at a time for attendance."
+    }
+    ```
+  - **Session Inactive / Closed (`400 Bad Request`):**
+    ```json
+    {
+      "status": "session_inactive",
+      "message": "Attendance rejected: Session SES-... is 'Completed'. Attendance can only be recorded during an Active session."
+    }
+    ```
+  - **Session Not Found (`404 Not Found`):**
+    ```json
+    {
+      "status": "error",
+      "error": "Session not found",
+      "message": "Session 'SES-...' not found."
+    }
+    ```
+  - **Missing Image Data (`400 Bad Request`):**
+    ```json
+    {
+      "status": "error",
+      "error": "Missing frame image data",
+      "message": "Missing frame image data"
+    }
+    ```
+
+### 4.2 Manual Attendance Override
+- **Route:** `POST /api/sessions/<session_id>/mark-manual`
+- **Request Body:**
+  ```json
+  {
+    "student_id": 6
+  }
+  ```
+  *(Accepts numeric IDs e.g. `6`, string keys e.g. `"STU006"`, or roll numbers e.g. `"21BCE006"`)*
+- **Responses:**
+  - **Marked Present (`200 OK`):**
+    ```json
+    {
+      "status": "marked",
+      "student": { ... },
+      "timestamp": "09:06:00 AM",
+      "method": "MANUAL"
+    }
+    ```
+  - **Already Marked (`200 OK`):**
+    ```json
+    {
+      "status": "already_marked",
+      "student": { ... },
+      "message": "Duplicate attendance blocked: ..."
+    }
+    ```
+  - **Not Enrolled (`200 OK`):**
+    ```json
+    {
+      "status": "not_enrolled",
+      "student": { ... },
+      "message": "Enrollment Error: ..."
+    }
+    ```
+  - **Session Inactive (`400 Bad Request`):**
+    ```json
+    {
+      "status": "session_inactive",
+      "message": "Attendance rejected: Session is 'Completed'."
+    }
+    ```
+  - **Student or Session Not Found (`404 Not Found`):**
+    ```json
+    {
+      "error": "Student not found"
+    }
+    ```
+
+### 4.3 End Session Lifecycle
+- **Route:** `POST /api/sessions/<session_id>/end`
+- **Behavior:** Persistently transitions session state in `class_sessions` from `'Active'` to `'Completed'`, recording the exact closure timestamp in `end_time`.
+- **Responses:**
+  - **Success (`200 OK`):**
+    ```json
+    {
+      "status": "success",
+      "message": "Attendance session #SES-... ended and archived.",
+      "session": {
+        "session_id": "SES-...",
+        "course_id": "CRS-CSE3132",
+        "status": "Completed",
+        "end_time": "10:30:00",
+        ...
+      }
+    }
+    ```
+  - **Already Completed or Inactive (`400 Bad Request`):**
+    ```json
+    {
+      "status": "error",
+      "error": "Session close failed",
+      "message": "Session 'SES-...' is already Completed."
+    }
+    ```
+  - **Session Not Found (`404 Not Found`):**
+    ```json
+    {
+      "status": "error",
+      "error": "Session not found",
+      "message": "Session '...' not found."
+    }
+    ```
+
+---
+
+## 5. Authentication, Authorization & Security Policies
+
+### 5.1 Identity & Session Authentication
+- **Mechanism:** Flask session cookies signed with `SECRET_KEY` loaded via environment variable (`config.py`).
+- **Cookie Security:** `HttpOnly=True`, `SameSite=Lax`, `Secure=True` in production.
+- **Roles:**
+  - `admin`: Global access across all courses, sessions, and management functions.
+  - `faculty`: Instructors authorized to manage attendance and enrollments for assigned courses.
+  - `student`: Read-only student identity (prohibited from invoking faculty attendance operations or admin views).
+
+### 5.2 API Authentication & Access Boundaries
+| Endpoint | Method | Required Role / Token | Access Rule |
+| :--- | :--- | :--- | :--- |
+| `/api/sessions/<id>/recognize` | `POST` | `faculty`, `admin`, or `X-API-Key` | Must be assigned instructor, admin, or verified camera kiosk |
+| `/api/sessions/<id>/mark-manual`| `POST` | `faculty`, `admin` | Must be assigned instructor or admin |
+| `/api/sessions/<id>/end` | `POST` | `faculty`, `admin` | Must be assigned instructor or admin |
+| `/api/courses/<id>/enroll` | `POST` | `faculty`, `admin` | Must be assigned course instructor or admin |
+| `/api/courses/<id>/enrollment-data`| `GET` | Authenticated user | Returns roster and enrolled IDs |
+| `/api/students/<id>/register-face`| `POST` | `faculty`, `admin` | Registers face biometric embeddings |
+| `/api/reports/export-csv` | `GET` | `faculty`, `admin` | Generates RFC 4180 attendance CSV export |
+
+### 5.3 Error Status Responses
+- **`401 Unauthorized`:**
+  Returned when unauthenticated requests access protected API endpoints.
+  ```json
+  {
+    "status": "error",
+    "error": "Unauthorized",
+    "message": "Authentication required to access this resource."
+  }
+  ```
+- **`403 Forbidden`:**
+  Returned when an authenticated user lacks the required role or attempts cross-instructor session modification.
+  ```json
+  {
+    "status": "error",
+    "error": "Forbidden",
+    "message": "Access denied: insufficient permissions."
+  }
+  ```
+
+

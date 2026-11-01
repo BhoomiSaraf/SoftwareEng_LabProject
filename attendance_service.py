@@ -11,6 +11,7 @@ Enforces all Software Engineering Lab domain constraints:
 
 import csv
 import io
+import sqlite3
 from datetime import datetime
 from typing import Tuple, Dict, Any, List, Optional
 from database import get_db_cursor
@@ -144,15 +145,27 @@ class AttendanceService:
             )
 
         # Rule 5: Record attendance
-        record = AttendanceRecordModel.record_attendance(
-            session_id=session_id,
-            student_id=actual_student_id,
-            course_id=session['course_id'],
-            status='Present',
-            method=method,
-            confidence_score=confidence_score,
-            db_path=db_path
-        )
+        try:
+            record = AttendanceRecordModel.record_attendance(
+                session_id=session_id,
+                student_id=actual_student_id,
+                course_id=session['course_id'],
+                status='Present',
+                method=method,
+                confidence_score=confidence_score,
+                db_path=db_path
+            )
+            if not record:
+                return False, "Failed to persist attendance record in database.", None
+        except Exception as e:
+            existing = AttendanceRecordModel.check_existing(session_id, actual_student_id, db_path)
+            if existing:
+                return (
+                    False,
+                    f"Duplicate attendance blocked: {student['name']} ({student['roll_number']}) is already marked '{existing['status']}' for session {session_id} (timestamp: {existing['timestamp']}).",
+                    existing
+                )
+            return False, f"Database write failure: {str(e)}", None
 
         record_with_details = {
             **record,

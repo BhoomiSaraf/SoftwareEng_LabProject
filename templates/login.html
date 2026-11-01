@@ -15,6 +15,7 @@
             </div>
 
             <form id="loginForm" method="POST" action="{{ url_for('frontend.login') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <div class="mb-3">
                     <label for="username" class="form-label text-slate-300 fs-xs text-uppercase fw-semibold">Faculty Email / Username</label>
                     <div class="input-group">

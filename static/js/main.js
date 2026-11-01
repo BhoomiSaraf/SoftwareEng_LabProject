@@ -41,12 +41,23 @@ function showToast(message, type = 'info', title = '') {
     }
 }
 
-// Global API Fetch helper with consistent error handling
+// Global API Fetch helper with consistent error handling and automatic CSRF protection
 async function fetchJson(url, options = {}) {
     const defaultHeaders = {
         'Accept': 'application/json',
         'Content-Type': 'application/json'
     };
+
+    const method = (options.method || 'GET').toUpperCase();
+    if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
+        const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+        if (csrfMeta) {
+            const token = csrfMeta.getAttribute('content');
+            if (token) {
+                defaultHeaders['X-CSRFToken'] = token;
+            }
+        }
+    }
 
     const config = {
         ...options,

@@ -43,6 +43,8 @@ instance/
 # Biometric and raw face images (DO NOT COMMIT RAW BIOMETRIC DATA)
 data/faces/
 data/raw/
+*.npz
+data/*.npz
 *.jpg
 *.jpeg
 *.png
