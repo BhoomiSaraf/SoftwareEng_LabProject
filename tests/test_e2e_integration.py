@@ -64,6 +64,12 @@ from run_frontend_dev import app
 from config import Config
 
 
+def _set_role(client, role):
+    """Face enrolment and roster editing are admin-only; sessions are run by faculty."""
+    with client.session_transaction() as sess:
+        sess["user"] = {**sess["user"], "role": role}
+
+
 @pytest.fixture
 def e2e_env(tmp_path):
     """Creates a completely isolated SQLite database, configured embeddings path, and test client."""
@@ -267,7 +273,8 @@ def test_3_enrollment_lifecycle_and_duplicate_rejection(e2e_env):
     st = dp.create_student("229301001", "Student One", "s1@college.edu")
     cr = dp.create_course("CS101", "Intro to CS", faculty_id="FAC001")
 
-    # Enroll via API
+    # Enroll via API (admin only)
+    _set_role(client, "admin")
     resp = client.post(f"/api/courses/{cr['course_id']}/enroll", json={
         "student_ids": [st["student_id"]]
     })
@@ -312,6 +319,7 @@ def test_4_face_encoding_persistence_and_failure_honesty(e2e_env):
     orig_detect = face_service.detect_faces
     try:
         face_service.detect_faces = lambda img: [(20, 20, 120, 120)]
+        _set_role(client, "admin")
 
         # 1. Register face through API
         resp = client.post(f"/api/students/{st['student_id']}/register-face", json={
@@ -408,12 +416,15 @@ def test_5_biometric_scenarios_deterministic_and_synthetic(e2e_env):
     try:
         # Register Alice and Bob faces with single box detection
         face_service.detect_faces = lambda img: [(20, 20, 120, 120)]
+        _set_role(client, "admin")
         client.post(f"/api/students/{s1['student_id']}/register-face", json={"image": alice_b64})
         client.post(f"/api/students/{s2['student_id']}/register-face", json={"image": bob_b64})
+        _set_role(client, "faculty")
 
         # Start attendance session via frontend route
         resp = client.post("/actions/sessions/start", data={
             "course_id": course_id,
+            "section": "All",
             "topic": "Graph Algorithms Lecture"
         }, follow_redirects=False)
         assert resp.status_code == 302
@@ -615,7 +626,7 @@ def test_7_csv_export_multi_course_and_edge_cases(e2e_env):
     expected_header = [
         'Roll Number',
         'Student Name',
-        'Email',
+        'Section',
         'Course Code',
         'Total Sessions',
         'Attended Sessions',
@@ -664,8 +675,8 @@ def test_7_csv_export_multi_course_and_edge_cases(e2e_env):
     assert len(c3_reader) == 2
     assert c3_reader[1][4] == "0"
     assert c3_reader[1][5] == "0"
-    assert c3_reader[1][6] == "100.0%"
-    assert c3_reader[1][7] == "Eligible"
+    assert c3_reader[1][6] == "N/A"  # no sessions held yet: not a misleading 100%
+    assert c3_reader[1][7] == "No sessions yet"
 
     # 4. Nonexistent course returns 404
     bad_resp = client.get("/api/reports/export-csv?course_id=INVALID_CRS_404")

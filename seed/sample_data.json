@@ -1,0 +1,74 @@
+{
+  "_comment": "Demo data for the Smart Attendance prototype. Only students with a 'photo' are real; everyone else is sample data. Loaded by seed_demo.py - nothing here is referenced from application code.",
+  "admins": [
+    {"username": "admin", "password": "admin123", "name": "Administrator"}
+  ],
+  "faculty": [
+    {"faculty_id": "FAC001", "username": "rajesh.kumar",   "name": "Dr. Rajesh Kumar",     "department": "Computer Science & Engineering"},
+    {"faculty_id": "FAC002", "username": "meenakshi.s",    "name": "Dr. Meenakshi Sharma", "department": "Computer Science & Engineering"},
+    {"faculty_id": "FAC003", "username": "sanjay.verma",   "name": "Dr. Sanjay Verma",     "department": "Computer Science & Engineering"},
+    {"faculty_id": "FAC004", "username": "neha.gupta",     "name": "Dr. Neha Gupta",       "department": "Information Technology"},
+    {"faculty_id": "FAC005", "username": "arvind.mathur",  "name": "Dr. Arvind Mathur",    "department": "Computer Science & Engineering"},
+    {"faculty_id": "FAC006", "username": "pooja.agarwal",  "name": "Dr. Pooja Agarwal",    "department": "Computer Science & Engineering"},
+    {"faculty_id": "FAC007", "username": "vikram.rathore", "name": "Dr. Vikram Singh Rathore", "department": "Artificial Intelligence & Data Science"},
+    {"faculty_id": "FAC008", "username": "kavita.joshi",   "name": "Dr. Kavita Joshi",     "department": "Artificial Intelligence & Data Science"}
+  ],
+  "faculty_default_password": "faculty123",
+  "email_domain": "jaipur.manipal.edu",
+  "courses": [
+    {"code": "CSE3132", "name": "Software Engineering Laboratory", "credits": 2, "semester": 5,
+     "sections": {"A": "FAC001", "B": "FAC002", "C": "FAC001"}},
+    {"code": "CSE3101", "name": "Operating Systems", "credits": 4, "semester": 5,
+     "sections": {"A": "FAC003", "B": "FAC003", "C": "FAC004"}},
+    {"code": "CSE3103", "name": "Database Management Systems", "credits": 3, "semester": 5,
+     "sections": {"A": "FAC002", "B": "FAC005", "C": "FAC005"}},
+    {"code": "CSE3105", "name": "Computer Networks", "credits": 4, "semester": 5,
+     "sections": {"A": "FAC004", "B": "FAC004", "C": "FAC006"}},
+    {"code": "CSE3107", "name": "Machine Learning", "credits": 3, "semester": 5,
+     "sections": {"A": "FAC007", "B": "FAC007", "C": "FAC008"}},
+    {"code": "CSE3109", "name": "Theory of Computation", "credits": 3, "semester": 5,
+     "sections": {"A": "FAC006", "B": "FAC006", "C": "FAC006"}},
+    {"code": "CSE3111", "name": "Cloud Computing (Elective)", "credits": 3, "semester": 5,
+     "sections": {"A": "FAC008", "B": "FAC008"}},
+    {"code": "CSE3113", "name": "Information Security (Elective)", "credits": 3, "semester": 5,
+     "sections": {"B": "FAC005", "C": "FAC001"}},
+    {"code": "CSE3115", "name": "Data Mining Laboratory", "credits": 2, "semester": 5,
+     "sections": {"A": "FAC007", "C": "FAC007"}},
+    {"code": "HUM3101", "name": "Professional Ethics", "credits": 2, "semester": 5,
+     "sections": {"A": "FAC006", "B": "FAC008", "C": "FAC008"}}
+  ],
+  "students": [
+    {"roll_number": "229301045", "name": "Bhoomi Saraf", "email": "bhoomi.229301045@muj.manipal.edu", "section": "A",
+     "photo": "data/faces/bhoomi_saraf.jpg"},
+
+    {"roll_number": "229301101", "name": "Aarav Sharma",     "section": "A"},
+    {"roll_number": "229301102", "name": "Ishita Bansal",    "section": "A"},
+    {"roll_number": "229301103", "name": "Rohan Mehta",      "section": "A"},
+    {"roll_number": "229301104", "name": "Diya Khandelwal",  "section": "A"},
+    {"roll_number": "229301105", "name": "Karan Choudhary",  "section": "A"},
+    {"roll_number": "229301106", "name": "Nisha Rajput",     "section": "A"},
+    {"roll_number": "229301107", "name": "Aditya Saxena",    "section": "A"},
+    {"roll_number": "229301108", "name": "Meera Jain",       "section": "A"},
+    {"roll_number": "229301109", "name": "Harsh Vardhan",    "section": "A"},
+
+    {"roll_number": "229301088", "name": "Kanakpreet Kaur",  "section": "B"},
+    {"roll_number": "2427030022", "name": "Apoorva Kala",    "email": "apoorva.2427030022@muj.manipal.edu", "section": "B"},
+    {"roll_number": "229301203", "name": "Priya Patel",      "section": "B"},
+    {"roll_number": "229301204", "name": "Siddharth Rao",    "section": "B"},
+    {"roll_number": "229301205", "name": "Tanvi Joshi",      "section": "B"},
+    {"roll_number": "229301206", "name": "Yash Gupta",       "section": "B"},
+    {"roll_number": "229301207", "name": "Anushka Agarwal",  "section": "B"},
+    {"roll_number": "229301208", "name": "Dev Malhotra",     "section": "B"},
+    {"roll_number": "229301209", "name": "Sneha Kulkarni",   "section": "B"},
+
+    {"roll_number": "229301301", "name": "Ananya Deshmukh",  "section": "C"},
+    {"roll_number": "229301302", "name": "Kabir Verma",      "section": "C"},
+    {"roll_number": "229301303", "name": "Riya Mathur",      "section": "C"},
+    {"roll_number": "229301304", "name": "Arjun Nair",       "section": "C"},
+    {"roll_number": "229301305", "name": "Pooja Shekhawat",  "section": "C"},
+    {"roll_number": "229301306", "name": "Vivek Tiwari",     "section": "C"},
+    {"roll_number": "229301307", "name": "Simran Arora",     "section": "C"},
+    {"roll_number": "229301308", "name": "Mohit Bhardwaj",   "section": "C"},
+    {"roll_number": "229301309", "name": "Kritika Soni",     "section": "C"}
+  ]
+}

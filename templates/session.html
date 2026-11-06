@@ -11,8 +11,17 @@
                 <span class="badge bg-primary-soft text-primary border border-primary-subtle font-monospace px-2 py-1 fs-xs">
                     {{ session_data.course_code }}
                 </span>
+                {% if session_data.status == 'ACTIVE' %}
                 <span class="badge bg-danger-subtle text-danger border border-danger-subtle rounded-pill fs-xxs">
                     <i class="bi bi-broadcast text-danger animate-pulse me-1"></i> LIVE ATTENDANCE SESSION
+                </span>
+                {% else %}
+                <span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle rounded-pill fs-xxs">
+                    <i class="bi bi-check-circle-fill text-muted me-1"></i> SESSION COMPLETED
+                </span>
+                {% endif %}
+                <span class="badge bg-primary-soft text-primary border border-primary-subtle rounded-pill fs-xxs">
+                    <i class="bi bi-diagram-3-fill me-1"></i> Section: {{ session_data.section|default('All') }}
                 </span>
                 <span class="text-muted fs-xs">Session #{{ session_data.id }}</span>
             </div>
@@ -25,6 +34,7 @@
         </div>
 
         <div class="d-flex align-items-center gap-2">
+            {% if session_data.status == 'ACTIVE' %}
             <button type="button" id="toggleScanModeBtn" class="btn btn-tech-outline rounded-pill px-3 fs-sm">
                 <i class="bi bi-play-circle-fill text-success me-1"></i> 
                 <span id="scanModeLabel">Start Auto-Scan</span>
@@ -32,9 +42,24 @@
             <button type="button" id="endSessionBtn" class="btn btn-outline-danger rounded-pill px-3 fs-sm" data-session-id="{{ session_data.id }}">
                 <i class="bi bi-stop-circle me-1"></i> Close Session
             </button>
+            {% else %}
+            <a href="{{ url_for('frontend.reports', session_id=session_data.id) }}" class="btn btn-primary rounded-pill px-3 fs-sm">
+                <i class="bi bi-file-earmark-bar-graph me-1"></i> View Attendance Report
+            </a>
+            {% endif %}
         </div>
     </div>
 </div>
+
+{% if session_data.status != 'ACTIVE' %}
+<div class="alert alert-warning py-3 px-4 rounded-3 mb-4 d-flex align-items-center gap-3">
+    <i class="bi bi-exclamation-triangle-fill fs-4 text-warning"></i>
+    <div>
+        <h6 class="fw-bold mb-0 text-white">This Attendance Session is Completed</h6>
+        <p class="fs-xs text-slate-300 mb-0">The session has concluded. Real-time camera scanning is disabled for completed sessions.</p>
+    </div>
+</div>
+{% endif %}
 
 <!-- Session Split Screen: Camera Scanner on Left, Real-time Attendance Feed on Right -->
 <div class="row g-4">
@@ -113,7 +138,7 @@
                 <p class="text-muted fs-xs mb-2">If facial recognition is temporarily obstructed, faculty may manually record attendance for an enrolled student:</p>
                 <div class="input-group">
                     <select id="manualStudentSelect" class="form-select form-tech-control form-select-sm">
-                        <option value="">Select Enrolled Student...</option>
+                        <option value="">Select a student on this roster...</option>
                         {% for student in enrolled_students %}
                         <option value="{{ student.id }}">{{ student.roll_no }} - {{ student.name }}</option>
                         {% endfor %}
@@ -233,12 +258,13 @@
 <!-- Pass session configuration parameters into JS -->
 <script>
 window.SESSION_CONFIG = {
-    sessionId: {{ session_data.id }},
-    courseId: {{ session_data.course_id }},
-    startTime: "{{ session_data.start_time }}",
+    sessionId: {{ session_data.id|tojson }},
+    courseId: {{ session_data.course_id|tojson }},
+    startTime: {{ session_data.start_time|tojson }},
+    startedAt: {{ (session_data.date ~ 'T' ~ session_data.start_time)|tojson }},
     totalEnrolled: {{ session_data.total_enrolled }},
     presentCount: {{ session_data.present_count }},
-    status: "{{ session_data.status }}"
+    status: {{ session_data.status|tojson }}
 };
 </script>
 <script src="{{ url_for('static', filename='js/session.js') }}"></script>

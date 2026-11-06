@@ -59,7 +59,8 @@
     });
 
     // 1. Session Duration Timer
-    let sessionSeconds = 0;
+    const startedMs = config.startedAt ? Date.parse(config.startedAt) : NaN;
+    let sessionSeconds = Number.isNaN(startedMs) ? 0 : Math.max(0, Math.floor((Date.now() - startedMs) / 1000));
     setInterval(() => {
         sessionSeconds++;
         const hrs = String(Math.floor(sessionSeconds / 3600)).padStart(2, '0');
@@ -118,7 +119,19 @@
             handleRecognitionResult(result);
         } catch (err) {
             console.error('Recognition error:', err);
-            setHudStatus('danger', 'bi-exclamation-triangle-fill text-danger', 'Service Error', err.message);
+            const msg = String(err.message || '');
+            const msgLower = msg.toLowerCase();
+            if (msgLower.includes('inactive') || msgLower.includes('completed') || msgLower.includes('ended') || msgLower.includes('closed')) {
+                setHudStatus('warning', 'bi-pause-circle text-warning', 'Session Inactive', 'This attendance session has ended. Live scanning is closed.');
+                if (isAutoScanning) toggleAutoScan();
+            } else if (msgLower.includes('not authorized') || msgLower.includes('forbidden') || msgLower.includes('unauthorized')) {
+                setHudStatus('danger', 'bi-shield-x text-danger', 'Access Denied', msg);
+                if (isAutoScanning) toggleAutoScan();
+            } else if (msgLower.includes('csrf') || msgLower.includes('token')) {
+                setHudStatus('warning', 'bi-shield-exclamation text-warning', 'Session Expired', 'Security token expired. Please refresh the browser page.');
+            } else {
+                setHudStatus('danger', 'bi-exclamation-triangle-fill text-danger', 'Scan Error', msg || 'Failed to communicate with attendance server.');
+            }
         } finally {
             isProcessingFrame = false;
             setTimeout(() => {
@@ -167,13 +180,29 @@
                 `Not Enrolled: ${student.name}`,
                 `${student.roll_no} is registered in the system but not enrolled in this specific course roster.`
             );
+        }
+        else if (status === 'wrong_section') {
+            setHudStatus(
+                'warning',
+                'bi-people-fill text-warning',
+                `Wrong Section: ${student.name || 'Student'}`,
+                res.message || `${student.roll_no} belongs to a different section for this course.`
+            );
         } 
         else if (status === 'unrecognized' || status === 'unknown') {
             setHudStatus(
                 'danger',
                 'bi-question-circle-fill text-danger',
                 'Unrecognized Face',
-                'Face detected in camera viewport, but does not match any registered student embeddings.'
+                res.message || 'Face detected, but it does not match any enrolled student on this roster.'
+            );
+        }
+        else if (status === 'multiple_faces') {
+            setHudStatus(
+                'warning',
+                'bi-people-fill text-warning',
+                'Multiple Faces',
+                'Only one student can be scanned at a time. Please step up one by one.'
             );
         }
         else if (status === 'no_face') {

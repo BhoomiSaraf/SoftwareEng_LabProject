@@ -1,194 +1,213 @@
 {% extends "base.html" %}
 
-{% block title %}Course & Enrollment Management - Smart Attendance System{% endblock %}
+{% set is_admin = session.get('user', {}).get('role') == 'admin' %}
+
+{% block title %}Courses - Smart Attendance System{% endblock %}
 
 {% block content %}
 <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-4">
     <div>
-        <h2 class="h3 fw-bold mb-1">Course &amp; Enrollment Management</h2>
-        <p class="text-slate-300 fs-sm mb-0">Create academic courses, assign faculty, and map enrolled students for attendance eligibility</p>
+        <h2 class="h3 fw-bold mb-1">{{ 'Courses & Teaching Assignments' if is_admin else 'My Courses' }}</h2>
+        <p class="text-slate-300 fs-sm mb-0">
+            {% if is_admin %}Create courses, choose which teacher takes each section, and manage rosters
+            {% else %}The courses and sections assigned to you. Rosters are managed by administrators.{% endif %}
+        </p>
     </div>
-    <div class="d-flex gap-2">
-        <button type="button" class="btn btn-primary d-flex align-items-center gap-2 rounded-3 shadow-sm px-3" data-bs-toggle="modal" data-bs-target="#createCourseModal">
-            <i class="bi bi-journal-plus"></i>
-            <span>Create New Course</span>
-        </button>
-    </div>
-</div>
-
-<!-- Courses Grid / Cards -->
-<div class="row g-4 mb-4">
-    {% if courses %}
-        {% for course in courses %}
-        <div class="col-md-6 col-lg-4">
-            <div class="card-tech accent-primary p-4 h-100 d-flex flex-column justify-content-between">
-                <div>
-                    <div class="d-flex justify-content-between align-items-start mb-2">
-                        <span class="badge bg-primary-soft text-primary border border-primary-subtle font-monospace px-2 py-1 fs-xs">
-                            {{ course.code }}
-                        </span>
-                        <span class="badge bg-dark-card border border-subtle text-slate-300 rounded-pill fs-xxs">
-                            <i class="bi bi-person-fill text-primary me-1"></i> {{ course.faculty_name|default('Assigned to You') }}
-                        </span>
-                    </div>
-
-                    <h4 class="h5 fw-bold text-white mb-2">{{ course.name }}</h4>
-                    <p class="text-slate-300 fs-xs mb-3">{{ course.description|default('Core Computer Science curriculum course with laboratory evaluations.') }}</p>
-
-                    <div class="p-3 rounded-3 bg-dark-glass border border-subtle mb-3">
-                        <div class="d-flex justify-content-between align-items-center mb-1">
-                            <span class="text-muted fs-xs">Enrolled Students:</span>
-                            <span class="fw-bold text-white fs-sm">{{ course.enrolled_count|default(0) }}</span>
-                        </div>
-                        <div class="d-flex justify-content-between align-items-center">
-                            <span class="text-muted fs-xs">Sessions Conducted:</span>
-                            <span class="fw-bold text-primary fs-sm">{{ course.sessions_count|default(0) }}</span>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="d-flex gap-2 pt-2 border-top border-subtle">
-                    <button type="button" class="btn btn-sm btn-tech-outline flex-grow-1 rounded-pill fs-xs manage-enrollment-btn"
-                            data-course-id="{{ course.id }}"
-                            data-course-code="{{ course.code }}"
-                            data-course-name="{{ course.name }}">
-                        <i class="bi bi-people-fill text-primary me-1"></i> Roster &amp; Enroll
-                    </button>
-                    <a href="{{ url_for('frontend.reports', course_id=course.id) }}" class="btn btn-sm btn-tech-outline rounded-pill px-3 fs-xs" title="View Course Attendance Report">
-                        <i class="bi bi-file-earmark-bar-graph"></i>
-                    </a>
-                </div>
-            </div>
-        </div>
-        {% endfor %}
-    {% else %}
-        <div class="col-12">
-            <div class="card-tech p-5 text-center">
-                <i class="bi bi-journal-x fs-1 text-muted mb-3 d-block"></i>
-                <h4 class="text-white fw-bold mb-1">No Courses Created Yet</h4>
-                <p class="text-muted fs-sm mb-3">Create your first course to begin scheduling attendance sessions and enrolling students.</p>
-                <button type="button" class="btn btn-primary rounded-pill px-4 mx-auto" data-bs-toggle="modal" data-bs-target="#createCourseModal">
-                    <i class="bi bi-plus-lg me-1"></i> Create First Course
-                </button>
-            </div>
-        </div>
+    {% if is_admin %}
+    <button type="button" class="btn btn-primary d-flex align-items-center gap-2 rounded-3 shadow-sm px-3" data-bs-toggle="modal" data-bs-target="#createCourseModal">
+        <i class="bi bi-journal-plus"></i><span>Create New Course</span>
+    </button>
     {% endif %}
 </div>
 
+<div class="row g-4 mb-4">
+    {% for course in courses %}
+    <div class="col-md-6 col-xl-4">
+        <div class="card-tech accent-primary p-4 h-100 d-flex flex-column justify-content-between">
+            <div>
+                <div class="d-flex justify-content-between align-items-start mb-2">
+                    <span class="badge bg-primary-soft text-primary border border-primary-subtle font-monospace px-2 py-1 fs-xs">{{ course.code }}</span>
+                    <span class="text-slate-300 fs-xxs">{{ course.description }}</span>
+                </div>
+                <h4 class="h5 fw-bold text-white mb-3">{{ course.name }}</h4>
+
+                <div class="text-muted fs-xxs text-uppercase fw-semibold mb-1">{{ 'Sections & teachers' if is_admin else 'My sections' }}</div>
+                <div class="d-grid gap-1 mb-3">
+                    {% for sec in (course.sections if is_admin else course.my_sections) %}
+                    <div class="d-flex justify-content-between align-items-center px-3 py-2 rounded-3 bg-dark-glass border border-subtle">
+                        <span class="text-white fs-sm"><span class="badge bg-primary-soft text-primary font-monospace fs-xxs me-2">Sec {{ sec.section }}</span>{{ sec.faculty_name }}</span>
+                        <span class="text-slate-300 fs-xs">{{ sec.student_count }} students</span>
+                    </div>
+                    {% else %}
+                    <div class="text-slate-300 fs-xs">
+                        {% if is_admin %}No sections assigned yet.{% else %}Lead faculty (no section split).{% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+
+                <div class="d-flex justify-content-between fs-xs text-slate-300">
+                    <span>{{ course.enrolled_count }} enrolled</span>
+                    <span>{{ course.sessions_count }} sessions held</span>
+                </div>
+            </div>
+
+            <div class="d-flex gap-2 pt-3 mt-3 border-top border-subtle">
+                <button type="button" class="btn btn-sm btn-tech-outline flex-grow-1 rounded-pill fs-xs manage-enrollment-btn"
+                        data-course-id="{{ course.id }}" data-course-code="{{ course.code }}" data-course-name="{{ course.name }}"
+                        {% if not is_admin %}data-sections="{{ course.my_sections|map(attribute='section')|join(',') }}"{% endif %}>
+                    <i class="bi bi-people-fill text-primary me-1"></i> {{ 'Roster & Enrolment' if is_admin else 'View Roster' }}
+                </button>
+                {% if is_admin %}
+                <button type="button" class="btn btn-sm btn-tech-outline rounded-pill px-3 fs-xs assign-teachers-btn"
+                        data-course-id="{{ course.id }}" data-course-code="{{ course.code }}" data-course-name="{{ course.name }}"
+                        data-sections='{{ course.sections|tojson }}' title="Assign teachers to sections">
+                    <i class="bi bi-person-gear"></i> Teachers
+                </button>
+                {% endif %}
+                <a href="{{ url_for('frontend.reports', course_id=course.id) }}" class="btn btn-sm btn-tech-outline rounded-pill px-3 fs-xs" title="Attendance report">
+                    <i class="bi bi-file-earmark-bar-graph"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+    {% else %}
+    <div class="col-12">
+        <div class="card-tech p-5 text-center">
+            <i class="bi bi-journal-x fs-1 text-muted mb-3 d-block"></i>
+            <h4 class="text-white fw-bold mb-1">{{ 'No courses yet' if is_admin else 'No courses assigned to you' }}</h4>
+            <p class="text-slate-300 fs-sm mb-0">{{ 'Create a course to begin assigning teachers and sections.' if is_admin else 'An administrator needs to assign you to a course section.' }}</p>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+{% if is_admin %}
 <!-- Modal: Create Course -->
-<div class="modal fade modal-tech" id="createCourseModal" tabindex="-1" aria-labelledby="createCourseModalLabel" aria-hidden="true">
+<div class="modal fade modal-tech" id="createCourseModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title fw-bold" id="createCourseModalLabel">
-                    <i class="bi bi-journal-plus text-primary me-2"></i>Create Academic Course
-                </h5>
+                <h5 class="modal-title fw-bold"><i class="bi bi-journal-plus text-primary me-2"></i>Create Course</h5>
                 <button type="button" class="btn-close btn-close-white shadow-none" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <form id="createCourseForm" action="{{ url_for('frontend.create_course_action') }}" method="POST">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <div class="modal-body">
-                    <div class="mb-3">
-                        <label for="courseCode" class="form-label text-muted fs-xs text-uppercase fw-semibold">Course Code</label>
-                        <input type="text" class="form-tech-control form-control" id="courseCode" name="code" placeholder="e.g. CS301" required>
+                    <div class="row g-2 mb-3">
+                        <div class="col-4">
+                            <label for="courseCode" class="form-label text-muted fs-xs text-uppercase fw-semibold">Code</label>
+                            <input type="text" class="form-tech-control form-control" id="courseCode" name="code" placeholder="CSE3117" required>
+                        </div>
+                        <div class="col-8">
+                            <label for="courseName" class="form-label text-muted fs-xs text-uppercase fw-semibold">Title</label>
+                            <input type="text" class="form-tech-control form-control" id="courseName" name="name" placeholder="Software Testing" required>
+                        </div>
                     </div>
-
-                    <div class="mb-3">
-                        <label for="courseName" class="form-label text-muted fs-xs text-uppercase fw-semibold">Course Title</label>
-                        <input type="text" class="form-tech-control form-control" id="courseName" name="name" placeholder="e.g. Software Engineering Lab" required>
-                    </div>
-
                     <div class="row g-2 mb-3">
                         <div class="col-4">
                             <label for="courseCredits" class="form-label text-muted fs-xs text-uppercase fw-semibold">Credits</label>
-                            <input type="number" class="form-tech-control form-control" id="courseCredits" name="credits" min="1" max="10" value="3" placeholder="3">
+                            <input type="number" class="form-tech-control form-control" id="courseCredits" name="credits" min="1" max="10" value="3">
                         </div>
                         <div class="col-4">
                             <label for="courseSemester" class="form-label text-muted fs-xs text-uppercase fw-semibold">Semester</label>
-                            <input type="number" class="form-tech-control form-control" id="courseSemester" name="semester" min="1" max="12" value="5" placeholder="5">
+                            <input type="number" class="form-tech-control form-control" id="courseSemester" name="semester" min="1" max="12" value="5">
                         </div>
                         <div class="col-4">
-                            <label for="courseAcademicYear" class="form-label text-muted fs-xs text-uppercase fw-semibold">Academic Year</label>
-                            <input type="text" class="form-tech-control form-control" id="courseAcademicYear" name="academic_year" value="2026-2027" placeholder="2026-2027">
+                            <label for="courseAcademicYear" class="form-label text-muted fs-xs text-uppercase fw-semibold">Year</label>
+                            <input type="text" class="form-tech-control form-control" id="courseAcademicYear" name="academic_year" value="2026-2027">
                         </div>
                     </div>
-
-                    {% if session.get('user', {}).get('role') == 'admin' and faculty_list %}
                     <div class="mb-3">
-                        <label for="courseFaculty" class="form-label text-muted fs-xs text-uppercase fw-semibold">Assigned Faculty</label>
+                        <label for="courseFaculty" class="form-label text-muted fs-xs text-uppercase fw-semibold">Lead teacher</label>
                         <select class="form-tech-control form-select" id="courseFaculty" name="faculty_id" required>
-                            <option value="" disabled selected>Select faculty member...</option>
+                            <option value="" disabled selected>Select a teacher...</option>
                             {% for fac in faculty_list %}
-                            <option value="{{ fac.faculty_id }}">{{ fac.name }} ({{ fac.faculty_id }})</option>
+                            <option value="{{ fac.faculty_id }}">{{ fac.name }} - {{ fac.department }}</option>
                             {% endfor %}
                         </select>
                     </div>
-                    {% endif %}
-
-                    <div class="mb-3">
-                        <label for="courseDesc" class="form-label text-muted fs-xs text-uppercase fw-semibold">Description (Optional)</label>
-                        <textarea class="form-tech-control form-control" id="courseDesc" name="description" rows="3" placeholder="Course objectives, schedule, lab guidelines..."></textarea>
+                    <div class="mb-1">
+                        <label class="form-label text-muted fs-xs text-uppercase fw-semibold d-block">Sections offered</label>
+                        {% for sec in sections %}
+                        <div class="form-check form-check-inline">
+                            <input class="form-check-input" type="checkbox" name="sections" value="{{ sec }}" id="newSec{{ sec }}" checked>
+                            <label class="form-check-label text-white fs-sm" for="newSec{{ sec }}">Section {{ sec }}</label>
+                        </div>
+                        {% endfor %}
+                        <div class="form-text text-slate-300 fs-xs">The lead teacher is assigned to each ticked section and the section's students are enrolled. Change individual teachers afterwards with the Teachers button.</div>
                     </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-tech-outline rounded-pill px-3" data-bs-dismiss="modal">Cancel</button>
-                    <button type="submit" id="createCourseSubmitBtn" class="btn btn-primary rounded-pill px-4">
-                        Save Course
-                    </button>
+                    <button type="submit" class="btn btn-primary rounded-pill px-4">Create Course</button>
                 </div>
             </form>
         </div>
     </div>
 </div>
 
-<!-- Modal: Manage Course Enrollment -->
-<div class="modal fade modal-tech" id="enrollmentModal" tabindex="-1" aria-labelledby="enrollmentModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered modal-lg">
+<!-- Modal: Assign Teachers to Sections -->
+<div class="modal fade modal-tech" id="teachersModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
             <div class="modal-header">
                 <div>
-                    <h5 class="modal-title fw-bold" id="enrollmentModalLabel">
-                        <i class="bi bi-person-check text-primary me-2"></i>Course Student Roster
-                    </h5>
-                    <span class="text-muted fs-xs" id="rosterCourseTitle">Loading course...</span>
+                    <h5 class="modal-title fw-bold"><i class="bi bi-person-gear text-primary me-2"></i>Teachers by Section</h5>
+                    <span class="text-slate-300 fs-xs" id="teachersCourseTitle"></span>
                 </div>
                 <button type="button" class="btn-close btn-close-white shadow-none" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
-                <div class="mb-3">
-                    <input type="text" id="rosterSearchInput" class="form-tech-control form-control form-control-sm" placeholder="Filter students to enroll...">
-                </div>
+                <div id="teacherRows" class="d-grid gap-2"></div>
+                <p class="text-slate-300 fs-xs mt-3 mb-0">Saving a section also enrols that section's students in the course. Choosing "Remove section" keeps existing enrolments.</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
 
+<!-- Modal: Course Roster -->
+<div class="modal fade modal-tech" id="enrollmentModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div>
+                    <h5 class="modal-title fw-bold"><i class="bi bi-person-check text-primary me-2"></i>Course Roster</h5>
+                    <span class="text-slate-300 fs-xs" id="rosterCourseTitle"></span>
+                </div>
+                <button type="button" class="btn-close btn-close-white shadow-none" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
+                    <input type="text" id="rosterSearchInput" class="form-tech-control form-control form-control-sm" style="max-width: 240px;" placeholder="Filter students...">
+                    <select id="rosterSectionFilter" class="form-select form-tech-control form-select-sm" style="max-width: 150px;">
+                        <option value="">All sections</option>
+                    </select>
+                    {% if is_admin %}
+                    <div class="btn-group btn-group-sm ms-auto" id="sectionQuickPick"></div>
+                    {% endif %}
+                </div>
                 <div class="table-responsive" style="max-height: 380px;">
-                    <table class="table table-tech w-100" id="rosterTable">
+                    <table class="table table-tech w-100">
                         <thead>
                             <tr>
-                                <th style="width: 50px;">
-                                    <input type="checkbox" id="selectAllRoster" class="form-check-input">
-                                </th>
+                                <th style="width: 50px;">{% if is_admin %}<input type="checkbox" id="selectAllRoster" class="form-check-input">{% endif %}</th>
                                 <th>Roll No</th>
-                                <th>Student Name</th>
-                                <th>Face Biometric</th>
+                                <th>Student</th>
+                                <th>Section</th>
+                                <th>Face</th>
                             </tr>
                         </thead>
-                        <tbody id="rosterTableBody">
-                            <!-- Injected dynamically via JS -->
-                        </tbody>
+                        <tbody id="rosterTableBody"></tbody>
                     </table>
                 </div>
-
-                <div class="p-3 rounded-3 bg-dark-glass border border-subtle mt-3">
-                    <span class="text-muted fs-xs">
-                        <i class="bi bi-shield-lock-fill text-primary me-1"></i>
-                        Attendance verification rule: Face recognition will only mark students present if they are enrolled in this roster.
-                    </span>
-                </div>
+                <div class="text-slate-300 fs-xs mt-3"><span id="rosterCount">0</span> enrolled. Face recognition only marks students who are on this roster and in the session's section.</div>
             </div>
             <div class="modal-footer">
-                <button type="button" class="btn btn-tech-outline rounded-pill px-3" data-bs-dismiss="modal">Cancel</button>
-                <button type="button" id="saveEnrollmentBtn" class="btn btn-primary rounded-pill px-4">
-                    Save Roster Changes
-                </button>
+                <button type="button" class="btn btn-tech-outline rounded-pill px-3" data-bs-dismiss="modal">Close</button>
+                {% if is_admin %}
+                <button type="button" id="saveEnrollmentBtn" class="btn btn-primary rounded-pill px-4">Save Roster</button>
+                {% endif %}
             </div>
         </div>
     </div>
@@ -197,104 +216,144 @@
 
 {% block scripts %}
 <script>
+const isAdmin = {{ 'true' if is_admin else 'false' }};
+const facultyOptions = {{ (faculty_list if is_admin else [])|tojson }};
+const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+// ---------------- Roster modal ----------------
 let currentCourseId = null;
+let visibleSections = null;          // teachers only see the sections they teach
+let rosterStudents = [];
 const enrollmentModal = new bootstrap.Modal(document.getElementById('enrollmentModal'));
 const rosterBody = document.getElementById('rosterTableBody');
-const rosterCourseTitle = document.getElementById('rosterCourseTitle');
+const rosterSearch = document.getElementById('rosterSearchInput');
+const rosterSectionFilter = document.getElementById('rosterSectionFilter');
 const saveEnrollmentBtn = document.getElementById('saveEnrollmentBtn');
 const selectAllRoster = document.getElementById('selectAllRoster');
-const rosterSearch = document.getElementById('rosterSearchInput');
+const quickPick = document.getElementById('sectionQuickPick');
 
 document.querySelectorAll('.manage-enrollment-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
         currentCourseId = btn.dataset.courseId;
-        rosterCourseTitle.textContent = `${btn.dataset.courseCode} - ${btn.dataset.courseName}`;
-        rosterBody.innerHTML = '<tr><td colspan="4" class="text-center py-4 text-muted"><span class="spinner-border spinner-border-sm me-2"></span> Loading students...</td></tr>';
+        visibleSections = btn.dataset.sections ? btn.dataset.sections.split(',').filter(Boolean) : null;
+        document.getElementById('rosterCourseTitle').textContent = `${btn.dataset.courseCode} - ${btn.dataset.courseName}`;
+        rosterBody.innerHTML = '<tr><td colspan="5" class="text-center py-4 text-muted"><span class="spinner-border spinner-border-sm me-2"></span> Loading...</td></tr>';
         enrollmentModal.show();
-
         try {
-            const data = await fetchJson(`/api/courses/${currentCourseId}/enrollment-data`);
-            renderRoster(data.students, data.enrolled_ids || []);
+            const data = await fetchJson(`/api/courses/${encodeURIComponent(currentCourseId)}/enrollment-data`);
+            const enrolled = new Set(data.enrolled_ids);
+            rosterStudents = data.students.map(s => ({ ...s, enrolled: enrolled.has(s.id) }));
+            if (!isAdmin) {
+                rosterStudents = rosterStudents.filter(s => s.enrolled && (!visibleSections || visibleSections.includes(s.section)));
+            }
+            const sections = visibleSections || data.sections;
+            rosterSectionFilter.innerHTML = '<option value="">All sections</option>' + sections.map(s => `<option value="${esc(s)}">Section ${esc(s)}</option>`).join('');
+            if (quickPick) {
+                quickPick.innerHTML = data.sections.map(s => `
+                    <button type="button" class="btn btn-tech-outline fs-xs" data-section="${esc(s)}" data-bs-toggle="tooltip" title="Tick every student of section ${esc(s)}">+ Sec ${esc(s)}</button>`).join('');
+            }
+            renderRoster();
         } catch (err) {
-            rosterBody.innerHTML = `<tr><td colspan="4" class="text-danger text-center py-4">Failed to load roster: ${err.message}</td></tr>`;
+            rosterBody.innerHTML = `<tr><td colspan="5" class="text-danger text-center py-4">Failed to load roster: ${esc(err.message)}</td></tr>`;
         }
     });
 });
 
-function renderRoster(students, enrolledIds) {
-    if (!students || students.length === 0) {
-        rosterBody.innerHTML = '<tr><td colspan="4" class="text-muted text-center py-4">No registered students found in system.</td></tr>';
+function renderRoster() {
+    if (!rosterStudents.length) {
+        rosterBody.innerHTML = '<tr><td colspan="5" class="text-muted text-center py-4">No students on this roster.</td></tr>';
+        updateRosterCount();
         return;
     }
-
-    const enrolledSet = new Set(enrolledIds.map(String));
-
-    rosterBody.innerHTML = students.map(st => {
-        const isChecked = enrolledSet.has(String(st.id));
-        return `
-            <tr class="roster-row" data-search="${(st.name + ' ' + st.roll_no).toLowerCase()}">
-                <td>
-                    <input type="checkbox" class="form-check-input student-enroll-cb" value="${st.id}" ${isChecked ? 'checked' : ''}>
-                </td>
-                <td>
-                    <span class="badge bg-dark-card text-primary border border-primary-subtle font-monospace px-2 py-1 fs-xs">
-                        ${st.roll_no}
-                    </span>
-                </td>
-                <td class="fw-semibold text-white fs-sm">${st.name}</td>
-                <td>
-                    ${st.has_face 
-                        ? '<span class="badge badge-soft-success rounded-pill px-2 py-1 fs-xxs"><i class="bi bi-check-circle-fill me-1"></i> Face Enrolled</span>'
-                        : '<span class="badge badge-soft-warning rounded-pill px-2 py-1 fs-xxs"><i class="bi bi-exclamation-triangle-fill me-1"></i> Pending Face</span>'
-                    }
-                </td>
-            </tr>
-        `;
-    }).join('');
+    rosterBody.innerHTML = rosterStudents.map(st => `
+        <tr class="roster-row" data-section="${esc(st.section)}" data-search="${esc((st.name + ' ' + st.roll_no).toLowerCase())}">
+            <td><input type="checkbox" class="form-check-input student-enroll-cb" value="${esc(st.id)}" ${st.enrolled ? 'checked' : ''} ${isAdmin ? '' : 'disabled'}></td>
+            <td><span class="badge bg-dark-card text-primary border border-primary-subtle font-monospace px-2 py-1 fs-xs">${esc(st.roll_no)}</span></td>
+            <td class="fw-semibold text-white fs-sm">${esc(st.name)}</td>
+            <td><span class="badge bg-primary-soft text-primary font-monospace fs-xxs">Sec ${esc(st.section)}</span></td>
+            <td>${st.has_face
+                ? '<span class="badge badge-soft-success rounded-pill px-2 py-1 fs-xxs">Enrolled</span>'
+                : '<span class="badge badge-soft-warning rounded-pill px-2 py-1 fs-xxs">Pending</span>'}</td>
+        </tr>`).join('');
+    document.querySelectorAll('.student-enroll-cb').forEach(cb => cb.addEventListener('change', updateRosterCount));
+    applyRosterFilter();
 }
 
-// Select All Toggle
-selectAllRoster?.addEventListener('change', () => {
-    const isChecked = selectAllRoster.checked;
-    document.querySelectorAll('.student-enroll-cb').forEach(cb => {
-        if (cb.closest('tr').style.display !== 'none') {
-            cb.checked = isChecked;
-        }
-    });
-});
+function updateRosterCount() {
+    document.getElementById('rosterCount').textContent = document.querySelectorAll('.student-enroll-cb:checked').length;
+}
 
-// Filter roster rows
-rosterSearch?.addEventListener('input', () => {
+function applyRosterFilter() {
     const q = (rosterSearch.value || '').toLowerCase().trim();
+    const sec = rosterSectionFilter.value;
     document.querySelectorAll('.roster-row').forEach(row => {
-        const text = row.dataset.search || '';
-        row.style.display = (!q || text.includes(q)) ? '' : 'none';
+        const ok = (!q || row.dataset.search.includes(q)) && (!sec || row.dataset.section === sec);
+        row.style.display = ok ? '' : 'none';
     });
+    updateRosterCount();
+}
+rosterSearch.addEventListener('input', applyRosterFilter);
+rosterSectionFilter.addEventListener('change', applyRosterFilter);
+
+selectAllRoster?.addEventListener('change', () => {
+    document.querySelectorAll('.roster-row').forEach(row => {
+        if (row.style.display !== 'none') row.querySelector('.student-enroll-cb').checked = selectAllRoster.checked;
+    });
+    updateRosterCount();
 });
 
-// Save Roster Changes
+quickPick?.addEventListener('click', e => {
+    const btn = e.target.closest('button[data-section]');
+    if (!btn) return;
+    document.querySelectorAll('.roster-row').forEach(row => {
+        if (row.dataset.section === btn.dataset.section) row.querySelector('.student-enroll-cb').checked = true;
+    });
+    updateRosterCount();
+});
+
 saveEnrollmentBtn?.addEventListener('click', async () => {
-    if (!currentCourseId) return;
-
-    const selectedIds = Array.from(document.querySelectorAll('.student-enroll-cb:checked')).map(cb => cb.value);
-
+    const ids = Array.from(document.querySelectorAll('.student-enroll-cb:checked')).map(cb => cb.value);
     saveEnrollmentBtn.disabled = true;
     saveEnrollmentBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Saving...';
-
     try {
-        await fetchJson(`/api/courses/${currentCourseId}/enroll`, {
-            method: 'POST',
-            body: JSON.stringify({ student_ids: selectedIds })
-        });
-
-        showToast('Course roster successfully updated', 'success');
+        await fetchJson(`/api/courses/${encodeURIComponent(currentCourseId)}/enroll`, { method: 'POST', body: JSON.stringify({ student_ids: ids }) });
+        showToast('Roster updated', 'success');
         enrollmentModal.hide();
-        setTimeout(() => location.reload(), 1000);
+        setTimeout(() => location.reload(), 700);
     } catch (err) {
         showToast(err.message, 'danger');
         saveEnrollmentBtn.disabled = false;
-        saveEnrollmentBtn.innerHTML = 'Save Roster Changes';
+        saveEnrollmentBtn.textContent = 'Save Roster';
     }
 });
+
+{% if is_admin %}
+// ---------------- Teacher assignment modal (admin) ----------------
+const teachersEl = document.getElementById('teachersModal');
+if (teachersEl) {
+    const teachersModal = new bootstrap.Modal(teachersEl);
+    const allSections = {{ sections|tojson }};
+    const facultySelect = (selected) => `
+        <select name="faculty_id" class="form-select form-tech-control form-select-sm">
+            <option value="">Remove section</option>
+            ${facultyOptions.map(f => `<option value="${esc(f.faculty_id)}" ${f.faculty_id === selected ? 'selected' : ''}>${esc(f.name)}</option>`).join('')}
+        </select>`;
+
+    document.querySelectorAll('.assign-teachers-btn').forEach(btn => btn.addEventListener('click', () => {
+        const current = Object.fromEntries(JSON.parse(btn.dataset.sections).map(s => [s.section, s.faculty_id]));
+        document.getElementById('teachersCourseTitle').textContent = `${btn.dataset.courseCode} - ${btn.dataset.courseName}`;
+        document.getElementById('teacherRows').innerHTML = allSections.map(sec => `
+            <form method="POST" action="/actions/courses/${encodeURIComponent(btn.dataset.courseId)}/sections" class="d-flex gap-2 align-items-center">
+                <input type="hidden" name="csrf_token" value="${csrfToken}">
+                <input type="hidden" name="section" value="${esc(sec)}">
+                <span class="badge bg-primary-soft text-primary font-monospace px-2 py-2" style="min-width: 64px;">Sec ${esc(sec)}</span>
+                ${facultySelect(current[sec])}
+                <button type="submit" class="btn btn-sm btn-primary rounded-pill px-3">Save</button>
+            </form>`).join('');
+        teachersModal.show();
+    }));
+}
+{% endif %}
 </script>
 {% endblock %}

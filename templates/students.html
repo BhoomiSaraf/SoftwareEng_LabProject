@@ -2,40 +2,65 @@
 
 {% block title %}Student Management - Smart Attendance System{% endblock %}
 
+{% set is_admin = session.get('user', {}).get('role') == 'admin' %}
+
 {% block content %}
 <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-4">
     <div>
-        <h2 class="h3 fw-bold mb-1">Student Management</h2>
-        <p class="text-slate-300 fs-sm mb-0">Register students, manage academic profiles, and capture reference face data</p>
+        <h2 class="h3 fw-bold mb-1">{{ 'Student Management' if is_admin else 'My Students' }}</h2>
+        <p class="text-slate-300 fs-sm mb-0">
+            {% if is_admin %}Register students, assign sections and capture reference face data
+            {% else %}Students in the course sections you teach (read-only; administrators manage records){% endif %}
+        </p>
     </div>
+    {% if is_admin %}
     <div class="d-flex gap-2">
         <button type="button" class="btn btn-primary d-flex align-items-center gap-2 rounded-3 shadow-sm px-3" data-bs-toggle="modal" data-bs-target="#addStudentModal">
             <i class="bi bi-person-plus-fill"></i>
             <span>Register New Student</span>
         </button>
     </div>
+    {% endif %}
 </div>
 
 <!-- Search and Filter Bar -->
 <div class="card-tech p-3 mb-4">
     <div class="row g-2 align-items-center">
-        <div class="col-md-6 col-lg-4">
+        <div class="col-md-3">
             <div class="input-group">
                 <span class="input-group-text bg-dark-card border-subtle text-muted">
                     <i class="bi bi-search"></i>
                 </span>
-                <input type="text" id="studentSearchInput" class="form-tech-control form-control" placeholder="Search by name, roll no, or email...">
+                <input type="text" id="studentSearchInput" class="form-tech-control form-control" placeholder="Search name, roll no...">
             </div>
         </div>
-        <div class="col-md-4 col-lg-3">
-            <select id="faceStatusFilter" class="form-select form-tech-control">
-                <option value="all">All Face Registration Statuses</option>
-                <option value="registered">Face Registered Only</option>
-                <option value="pending">Face Pending Only</option>
+        <div class="col-md-3">
+            <select id="courseFilter" class="form-select form-tech-control">
+                <option value="all">All Courses</option>
+                {% if courses %}
+                    {% for c in courses %}
+                    <option value="{{ c.code|lower }}">{{ c.code }} - {{ c.name }}</option>
+                    {% endfor %}
+                {% endif %}
             </select>
         </div>
-        <div class="col text-md-end text-muted fs-xs">
-            Showing <strong id="studentCount" class="text-white">{{ students|length if students else 0 }}</strong> registered students
+        <div class="col-md-2">
+            <select id="sectionFilter" class="form-select form-tech-control">
+                <option value="all">All Sections</option>
+                {% for sec in sections %}
+                <option value="{{ sec|lower }}">Section {{ sec }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-2">
+            <select id="faceStatusFilter" class="form-select form-tech-control">
+                <option value="all">All Face Statuses</option>
+                <option value="registered">Registered</option>
+                <option value="pending">Pending</option>
+            </select>
+        </div>
+        <div class="col-md-2 text-md-end text-muted fs-xs">
+            Showing <strong id="studentCount" class="text-white">{{ students|length if students else 0 }}</strong> students
         </div>
     </div>
 </div>
@@ -48,16 +73,17 @@
                 <tr>
                     <th>Roll Number</th>
                     <th>Full Name</th>
+                    <th>Section</th>
                     <th>Email Address</th>
                     <th>Face Biometric Status</th>
                     <th>Courses</th>
-                    <th class="text-end">Actions</th>
+                    {% if is_admin %}<th class="text-end">Face Capture</th>{% endif %}
                 </tr>
             </thead>
             <tbody>
                 {% if students %}
                     {% for student in students %}
-                    <tr class="student-row" data-name="{{ student.name|lower }}" data-roll="{{ student.roll_no|lower }}" data-email="{{ student.email|lower }}" data-face="{{ 'registered' if student.has_face else 'pending' }}">
+                    <tr class="student-row" data-name="{{ student.name|lower }}" data-roll="{{ student.roll_no|lower }}" data-email="{{ student.email|lower }}" data-face="{{ 'registered' if student.has_face else 'pending' }}" data-section="{{ student.section|default('A')|lower }}" data-courses="{{ (student.course_codes|join(' '))|lower }}">
                         <td>
                             <span class="badge bg-dark-card text-primary border border-primary-subtle font-monospace px-2 py-1 fs-xs">
                                 {{ student.roll_no }}
@@ -71,11 +97,16 @@
                                 <span>{{ student.name }}</span>
                             </div>
                         </td>
+                        <td>
+                            <span class="badge bg-primary-soft text-primary border border-primary-subtle font-monospace px-2 py-1 fs-xxs">
+                                Sec {{ student.section|default('A')|upper }}
+                            </span>
+                        </td>
                         <td class="text-slate-300 fs-sm">{{ student.email }}</td>
                         <td>
                             {% if student.has_face %}
                             <span class="badge badge-soft-success rounded-pill px-2 py-1 fs-xs">
-                                <i class="bi bi-check-circle-fill me-1"></i> Registered ({{ student.face_samples_count|default(1) }} sample)
+                                <i class="bi bi-check-circle-fill me-1"></i> Enrolled ({{ student.face_samples_count }} sample{{ 's' if student.face_samples_count != 1 }})
                             </span>
                             {% else %}
                             <span class="badge badge-soft-warning rounded-pill px-2 py-1 fs-xs">
@@ -86,6 +117,7 @@
                         <td class="text-slate-300 fs-xs">
                             {{ student.course_codes|join(', ') if student.course_codes else 'None' }}
                         </td>
+                        {% if is_admin %}
                         <td class="text-end">
                             <button type="button" class="btn btn-sm btn-tech-outline rounded-pill px-3 fs-xs enroll-face-btn" 
                                     data-id="{{ student.id }}" 
@@ -96,12 +128,13 @@
                                 {{ 'Update Face' if student.has_face else 'Capture Face' }}
                             </button>
                         </td>
+                        {% endif %}
                     </tr>
                     {% endfor %}
                 {% else %}
                     <tr>
-                        <td colspan="6" class="text-center py-4 text-muted">
-                            No students registered yet. Click "Register New Student" to get started.
+                        <td colspan="7" class="text-center py-4 text-muted">
+                            {{ 'No students registered yet.' if is_admin else 'No students are assigned to your sections yet.' }}
                         </td>
                     </tr>
                 {% endif %}
@@ -110,7 +143,8 @@
     </div>
 </div>
 
-<!-- Modal: Register New Student -->
+{% if is_admin %}
+<!-- Modal: Add Student -->
 <div class="modal fade modal-tech" id="addStudentModal" tabindex="-1" aria-labelledby="addStudentModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
@@ -125,17 +159,27 @@
                 <div class="modal-body">
                     <div class="mb-3">
                         <label for="rollNo" class="form-label text-muted fs-xs text-uppercase fw-semibold">Roll Number / Student ID</label>
-                        <input type="text" class="form-tech-control form-control" id="rollNo" name="roll_no" placeholder="e.g. 21BCE045" required>
+                        <input type="text" class="form-tech-control form-control" id="rollNo" name="roll_no" placeholder="e.g. 229301120" required>
                     </div>
 
                     <div class="mb-3">
                         <label for="studentName" class="form-label text-muted fs-xs text-uppercase fw-semibold">Full Student Name</label>
-                        <input type="text" class="form-tech-control form-control" id="studentName" name="name" placeholder="e.g. Alex Morgan" required>
+                        <input type="text" class="form-tech-control form-control" id="studentName" name="name" placeholder="Full name" required>
                     </div>
 
                     <div class="mb-3">
                         <label for="studentEmail" class="form-label text-muted fs-xs text-uppercase fw-semibold">Institutional Email</label>
-                        <input type="email" class="form-tech-control form-control" id="studentEmail" name="email" placeholder="e.g. alex.morgan@college.edu" required>
+                        <input type="email" class="form-tech-control form-control" id="studentEmail" name="email" placeholder="name.rollno@muj.manipal.edu" required>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="studentSection" class="form-label text-muted fs-xs text-uppercase fw-semibold">Class Section</label>
+                        <select class="form-select form-tech-control" id="studentSection" name="section">
+                            {% for sec in sections %}
+                            <option value="{{ sec }}" {{ 'selected' if loop.first }}>Section {{ sec }}</option>
+                            {% endfor %}
+                        </select>
+                        <div class="form-text text-slate-300 fs-xs">The student is enrolled automatically in every course taught to this section.</div>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -149,6 +193,8 @@
     </div>
 </div>
 
+{% endif %}
+{% if is_admin %}
 <!-- Modal: Face Enrollment / Capture Modal -->
 <div class="modal fade modal-tech" id="faceEnrollModal" tabindex="-1" aria-labelledby="faceEnrollModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered modal-lg">
@@ -164,8 +210,8 @@
                     <div class="d-flex align-items-center justify-content-between p-3 rounded-3 bg-dark-glass border border-subtle">
                         <div>
                             <span class="text-muted fs-xs text-uppercase fw-semibold d-block">Target Student</span>
-                            <span class="fw-bold text-white fs-5" id="targetStudentName">Alex Morgan</span>
-                            <span class="badge bg-dark-card text-primary border border-primary-subtle font-monospace ms-2" id="targetStudentRoll">21BCE045</span>
+                            <span class="fw-bold text-white fs-5" id="targetStudentName"></span>
+                            <span class="badge bg-dark-card text-primary border border-primary-subtle font-monospace ms-2" id="targetStudentRoll"></span>
                         </div>
                         <div id="targetFaceStatus">
                             <!-- Injected dynamically -->
@@ -241,6 +287,7 @@
         </div>
     </div>
 </div>
+{% endif %}
 {% endblock %}
 
 {% block scripts %}
@@ -248,12 +295,16 @@
 // Student Search & Filter
 const searchInput = document.getElementById('studentSearchInput');
 const statusFilter = document.getElementById('faceStatusFilter');
+const courseFilter = document.getElementById('courseFilter');
+const sectionFilter = document.getElementById('sectionFilter');
 const studentRows = document.querySelectorAll('.student-row');
 const countDisplay = document.getElementById('studentCount');
 
 function filterStudents() {
     const q = (searchInput?.value || '').toLowerCase().trim();
-    const status = statusFilter?.value || 'all';
+    const status = (statusFilter?.value || 'all').toLowerCase();
+    const course = (courseFilter?.value || 'all').toLowerCase();
+    const section = (sectionFilter?.value || 'all').toLowerCase();
     let visible = 0;
 
     studentRows.forEach(row => {
@@ -261,11 +312,15 @@ function filterStudents() {
         const roll = row.dataset.roll || '';
         const email = row.dataset.email || '';
         const face = row.dataset.face || '';
+        const rowSection = (row.dataset.section || '').toLowerCase();
+        const rowCourses = (row.dataset.courses || '').toLowerCase();
 
         const matchesQuery = !q || name.includes(q) || roll.includes(q) || email.includes(q);
         const matchesStatus = status === 'all' || face === status;
+        const matchesSection = section === 'all' || rowSection === section;
+        const matchesCourse = course === 'all' || rowCourses.includes(course);
 
-        if (matchesQuery && matchesStatus) {
+        if (matchesQuery && matchesStatus && matchesSection && matchesCourse) {
             row.style.display = '';
             visible++;
         } else {
@@ -278,8 +333,11 @@ function filterStudents() {
 
 searchInput?.addEventListener('input', filterStudents);
 statusFilter?.addEventListener('change', filterStudents);
+courseFilter?.addEventListener('change', filterStudents);
+sectionFilter?.addEventListener('change', filterStudents);
 
-// Face Enrollment Modal Logic
+// Face Enrollment Modal Logic (admin only: the modal is not rendered for faculty)
+{% if is_admin %}
 let currentStudentId = null;
 let enrollStream = null;
 const enrollModal = new bootstrap.Modal(document.getElementById('faceEnrollModal'));
@@ -410,5 +468,6 @@ uploadBtn?.addEventListener('click', async () => {
     };
     reader.readAsDataURL(faceFileInput.files[0]);
 });
+{% endif %}
 </script>
 {% endblock %}
