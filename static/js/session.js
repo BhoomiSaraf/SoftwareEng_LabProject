@@ -197,6 +197,12 @@
                 res.message || 'Face detected, but it does not match any enrolled student on this roster.'
             );
         }
+        else if (status === 'verifying') {
+            setHudStatus('idle', 'bi-hourglass-split text-info', 'Verifying...', res.message || 'Hold still for one more scan.');
+        }
+        else if (status === 'low_quality') {
+            setHudStatus('warning', 'bi-brightness-high text-warning', 'Adjust Camera', res.message || 'Image quality too low.');
+        }
         else if (status === 'multiple_faces') {
             setHudStatus(
                 'warning',

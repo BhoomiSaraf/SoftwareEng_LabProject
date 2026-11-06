@@ -10,6 +10,7 @@ Enforces all Software Engineering Lab domain constraints:
 """
 
 import csv
+import uuid
 import io
 import sqlite3
 from datetime import datetime
@@ -73,7 +74,7 @@ class AttendanceService:
             ClassSessionModel.close_session(active_existing['session_id'], time_str, db_path)
 
         # Generate unique session ID: SES-<COURSE>-YYYYMMDD-HHMMSS-microseconds
-        session_id = f"SES-{course['course_code']}-{now.strftime('%Y%m%d%H%M%S%f')}"
+        session_id = f"SES-{course['course_code']}-{now.strftime('%Y%m%d%H%M%S%f')}-{uuid.uuid4().hex[:4]}"
 
         new_session = ClassSessionModel.create(
             session_id=session_id,

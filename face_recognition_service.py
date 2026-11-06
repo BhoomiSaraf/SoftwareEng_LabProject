@@ -64,9 +64,9 @@ class FaceRecognitionService:
 
     # Cosine-similarity cut-offs per embedding backend. SFace's published verification
     # threshold is 0.363; ImageNet features are not face-discriminative so need a high bar.
-    DEFAULT_THRESHOLDS = {"sface": 0.45, "legacy": 0.70}
+    DEFAULT_THRESHOLDS = {"sface": 0.50, "legacy": 0.70}
     # Winner must beat the runner-up (a different student) by this much, else the match is ambiguous.
-    AMBIGUITY_MARGIN = 0.04
+    AMBIGUITY_MARGIN = 0.08
     MODELS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models_cv")
 
     def __init__(
@@ -100,7 +100,7 @@ class FaceRecognitionService:
         sface_path = os.path.join(models_dir, "sface.onnx")
         if backend in ("auto", "sface") and os.path.exists(yunet_path) and os.path.exists(sface_path):
             try:
-                self.yunet = cv2.FaceDetectorYN.create(yunet_path, "", (320, 320), 0.8, 0.3, 5000)
+                self.yunet = cv2.FaceDetectorYN.create(yunet_path, "", (320, 320), 0.6, 0.3, 5000)
                 self.sface = cv2.FaceRecognizerSF.create(sface_path, "")
                 self.backend = "sface"
                 logger.info("Face pipeline: YuNet detector + SFace recognizer (128-d).")
@@ -355,6 +355,60 @@ class FaceRecognitionService:
         norm = np.linalg.norm(feat)
         return feat / norm if norm > 1e-8 else feat
 
+    def _feat(self, aligned: np.ndarray) -> np.ndarray:
+        feat = self.sface.feature(aligned).flatten().astype(np.float32)
+        norm = np.linalg.norm(feat)
+        return feat / norm if norm > 1e-8 else feat
+
+    @staticmethod
+    def _normalise_light(aligned: np.ndarray) -> np.ndarray:
+        """Even out lighting on the aligned 112x112 face (CLAHE on luminance)."""
+        lab = cv2.cvtColor(aligned, cv2.COLOR_BGR2LAB)
+        lab[:, :, 0] = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(4, 4)).apply(lab[:, :, 0])
+        return cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+
+    def _embed_variants(self, image: np.ndarray, row: np.ndarray) -> List[np.ndarray]:
+        """Several embeddings of ONE enrolment photo (mirror, light-normalised, brighter, dimmer) so a single
+        capture already covers common lighting changes."""
+        a = self.sface.alignCrop(image, row)
+        variants = [
+            a,
+            cv2.flip(a, 1),
+            self._normalise_light(a),
+            cv2.convertScaleAbs(a, alpha=1.25, beta=15),
+            cv2.convertScaleAbs(a, alpha=0.75, beta=-15),
+        ]
+        return [self._feat(v) for v in variants]
+
+    def _probe_embedding(self, image: np.ndarray, row: np.ndarray) -> np.ndarray:
+        """Probe embedding = mean of the aligned face, its mirror and its light-normalised version."""
+        a = self.sface.alignCrop(image, row)
+        feats = [self._feat(a), self._feat(cv2.flip(a, 1)), self._feat(self._normalise_light(a))]
+        mean = np.mean(feats, axis=0)
+        return (mean / np.linalg.norm(mean)).astype(np.float32)
+
+    def quality_issue(self, image: np.ndarray, row: np.ndarray, strict: bool = False) -> Optional[str]:
+        """Human-readable reason a detected face is too poor to trust, or None if it is usable."""
+        x, y, w, h = [int(v) for v in row[:4]]
+        min_w = 110 if strict else 70
+        if min(w, h) < min_w:
+            return "Face is too small or far away. Move closer to the camera."
+        if float(row[14]) < (0.65 if strict else 0.6):
+            return "Face is not clearly visible. Face the camera directly."
+        ih, iw = image.shape[:2]
+        crop = image[max(0, y):min(ih, y + h), max(0, x):min(iw, x + w)]
+        if crop.size == 0:
+            return "Face is cut off at the edge of the frame."
+        gray = cv2.cvtColor(cv2.resize(crop, (112, 112)), cv2.COLOR_BGR2GRAY)
+        if cv2.Laplacian(gray, cv2.CV_64F).var() < (35 if strict else 15):
+            return "Image is blurry. Hold still and let the camera focus."
+        mean = float(gray.mean())
+        if mean < 45:
+            return "Too dark. Add more light on your face."
+        if mean > 228:
+            return "Too bright or washed out. Reduce the light behind or on you."
+        return None
+
     @staticmethod
     def _apply_nms(boxes: List[Tuple[int, int, int, int]], overlap_thresh: float = 0.35) -> List[Tuple[int, int, int, int]]:
         """Apply Non-Maximum Suppression to collapse overlapping candidate boxes on the same face."""
@@ -594,16 +648,29 @@ class FaceRecognitionService:
         if crop.size == 0:
             crop = image[y:y+h, x:x+w]
 
+        to_store: List[np.ndarray]
         if self.backend == "sface":
             rows = self._detect_rows(image)
-            embedding = self._embed_row(image, rows[0]) if rows else self.extract_embedding(crop)
+            if rows:
+                issue = self.quality_issue(image, rows[0], strict=True)
+                if issue:
+                    return {
+                        "success": False,
+                        "status": "LOW_QUALITY",
+                        "student_id": student_key,
+                        "message": f"Photo rejected: {issue}"
+                    }
+                to_store = self._embed_variants(image, rows[0])
+            else:
+                to_store = [self.extract_embedding(crop)]
         else:
-            embedding = self.extract_embedding(crop)
+            to_store = [self.extract_embedding(crop)]
+        embedding = to_store[0]
 
         # Store in registry
         if student_key not in self._registered_embeddings:
             self._registered_embeddings[student_key] = []
-        self._registered_embeddings[student_key].append(embedding)
+        self._registered_embeddings[student_key].extend(to_store)
 
         logger.info(f"Student '{student_key}' face registered successfully (total samples: {len(self._registered_embeddings[student_key])}).")
 
@@ -680,7 +747,19 @@ class FaceRecognitionService:
         crop = image[y:y+h, x:x+w]
         if self.backend == "sface":
             rows = self._detect_rows(image)
-            probe_embedding = self._embed_row(image, rows[0]) if rows else self.extract_embedding(crop)
+            if rows:
+                issue = self.quality_issue(image, rows[0])
+                if issue:
+                    return {
+                        "status": "LOW_QUALITY",
+                        "student_id": None,
+                        "confidence": 0.0,
+                        "box": [x, y, w, h],
+                        "message": issue
+                    }
+                probe_embedding = self._probe_embedding(image, rows[0])
+            else:
+                probe_embedding = self.extract_embedding(crop)
         else:
             probe_embedding = self.extract_embedding(crop)
 

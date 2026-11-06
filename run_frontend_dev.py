@@ -102,17 +102,21 @@ def resolve_course_record(course_identifier, db_path=None):
 @role_required('admin')
 def api_register_face(student_id):
     data = request.get_json(silent=True) or {}
-    image_data = data.get('image')
-    if not image_data:
+    images = data.get('images') or ([data['image']] if data.get('image') else [])
+    if not images:
         return jsonify({'error': 'No image data payload received'}), 400
+    image_data = images[0]
 
     db_path = get_db_path()
     student = find_canonical_student(student_id, db_path=db_path)
     if not student:
         return jsonify({'error': 'Student not found'}), 404
 
-    # Face enrolment (YuNet detection + SFace embedding), stored under the canonical student_id only
-    res = face_service.register_student_face(student['student_id'], image_data)
+    # Face enrolment (YuNet detection + SFace embedding), stored under the canonical student_id only.
+    # Several frames are accepted; the usable ones are all stored (more poses/lighting = steadier matching).
+    results = [face_service.register_student_face(student['student_id'], img) for img in images]
+    ok_results = [r for r in results if r.get('success')]
+    res = ok_results[0] if ok_results else results[0]
     if not res.get('success'):
         return jsonify({
             'status': 'error',
@@ -122,7 +126,7 @@ def api_register_face(student_id):
 
     # Keep the reference photo so the embedding can be rebuilt if the recognition model changes
     try:
-        faces_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'faces')
+        faces_dir = os.path.join(os.path.dirname(os.path.abspath(get_embeddings_path())), 'faces')
         os.makedirs(faces_dir, exist_ok=True)
         import cv2
         cv2.imwrite(os.path.join(faces_dir, f"{student['student_id']}.jpg"), face_service.decode_image(image_data))
@@ -211,6 +215,21 @@ def api_enroll_course(course_id):
         'status': 'success',
         'message': f"Enrolled {enrolled_count} students in {course['course_code']}."
     })
+
+
+STRONG_MATCH = 0.72          # cosine similarity that is trusted from a single scan
+VOTE_WINDOW_SECONDS = 8
+_recent_matches = {}         # session_id -> list of (student_id, timestamp)
+
+
+def _vote_confirms(session_id, student_id, confidence):
+    import time
+    now = time.time()
+    recent = [m for m in _recent_matches.get(session_id, []) if now - m[1] <= VOTE_WINDOW_SECONDS]
+    agreed = bool(recent) and recent[-1][0] == student_id
+    recent.append((student_id, now))
+    _recent_matches[session_id] = recent[-4:]
+    return confidence >= STRONG_MATCH or agreed
 
 
 # Real Live Face Recognition Endpoint for Attendance Sessions
@@ -316,6 +335,9 @@ def api_recognize(session_id):
             'message': match_result.get('message', 'No face detected in camera view. Position face in center frame.')
         }), 200
 
+    elif status == 'LOW_QUALITY':
+        return jsonify({'status': 'low_quality', 'message': match_result.get('message', 'Image quality too low.')}), 200
+
     elif status == 'MULTIPLE_FACES_DETECTED':
         return jsonify({
             'status': 'multiple_faces',
@@ -345,6 +367,15 @@ def api_recognize(session_id):
     # 3. Valid match returned: Map to existing canonical student record in DB
     matched_id_str = str(match_result.get('student_id', '')).strip()
     confidence = match_result.get('confidence', 0.9)
+
+    # Agreement across scans: one frame can be a fluke, so (with the SFace engine) a student is only marked
+    # when a very confident match arrives or the same student wins two scans in a row.
+    if face_service.backend == 'sface' and not _vote_confirms(str(session_id), matched_id_str, confidence):
+        return jsonify({
+            'status': 'verifying',
+            'confidence': confidence,
+            'message': 'Possible match. Hold still for one more scan to confirm.'
+        }), 200
 
     student = find_canonical_student(matched_id_str, db_path=db_path)
     if not student:

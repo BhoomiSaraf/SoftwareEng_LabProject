@@ -115,7 +115,17 @@ def enroll_real_faces(conn, data, emb_path):
         print(f"  face for {st['name']} ({st['student_id']}): {res['status']}")
         if res.get('success'):
             conn.execute("UPDATE students SET face_registered = 1 WHERE student_id = ?;", (st['student_id'],))
+    # re-enrol anyone whose reference photo was saved by the admin UI (data/faces/<student_id>.jpg)
+    for (sid,) in conn.execute("SELECT student_id FROM students;").fetchall():
+        path = os.path.join(ROOT, 'data', 'faces', f"{sid}.jpg")
+        if os.path.isfile(path) and sid not in face_service.get_registered_student_ids():
+            res = face_service.register_student_face(sid, path)
+            print(f"  face for {sid} from saved photo: {res['status']}")
     face_service.save_embeddings(emb_path)
+    # enrolment flag must mirror the embeddings usable by the current model
+    enrolled = set(face_service.get_registered_student_ids())
+    for (sid,) in conn.execute("SELECT student_id FROM students;").fetchall():
+        conn.execute("UPDATE students SET face_registered = ? WHERE student_id = ?;", (1 if sid in enrolled else 0, sid))
     conn.commit()
 
 

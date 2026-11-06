@@ -68,7 +68,7 @@ class Config:
     )
 
     # Face Recognition Matching Threshold (0.0 - 1.0)
-    # None -> the face service picks a default suited to its embedding model (SFace: 0.45)
+    # None -> the face service picks a default suited to its embedding model (SFace: 0.50)
     RECOGNITION_THRESHOLD = float(os.environ['RECOGNITION_THRESHOLD']) if os.environ.get('RECOGNITION_THRESHOLD') else None
 
     # Academic Course Defaults (configurable per institution)

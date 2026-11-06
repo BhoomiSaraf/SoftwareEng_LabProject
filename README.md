@@ -116,7 +116,7 @@ flowchart TD
 
 ### Real-Time Biometric Face Recognition
 - **Face Detection**: OpenCV YuNet with 5-point landmarks for alignment (Haar Cascade is kept only as a fallback).
-- **Face Embedding**: OpenCV SFace (ONNX) produces unit-normalized 128-d embeddings. Matching is restricted to the session roster (course + section), uses a cosine threshold of 0.45 and rejects ambiguous near-ties.
+- **Face Embedding**: OpenCV SFace (ONNX) produces unit-normalized 128-d embeddings. Matching is restricted to the session roster (course + section), uses a cosine threshold of 0.50 and rejects ambiguous near-ties.
 - **Biometric Matching**: Computes cosine similarity between query probe embeddings and stored student templates against a configurable cutoff (`RECOGNITION_THRESHOLD=0.65`).
 - **Privacy-by-Design**: **Raw photographs or facial images are never permanently saved to disk or committed to Git.** Only compressed, anonymized mathematical arrays are persisted in `data/embeddings.npz`.
 - **Edge-Case Handling**: Deterministically handles and rejects missing cameras, zero faces detected, multiple faces in a single frame, and unrecognized probe faces.

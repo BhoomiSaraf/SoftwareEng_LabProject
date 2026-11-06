@@ -424,18 +424,24 @@ snapCamBtn?.addEventListener('click', async () => {
     if (!enrollVideo || !enrollCanvas || !currentStudentId) return;
 
     snapCamBtn.disabled = true;
-    snapCamBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Processing Face...';
-
     enrollCanvas.width = enrollVideo.videoWidth || 640;
     enrollCanvas.height = enrollVideo.videoHeight || 480;
     const ctx = enrollCanvas.getContext('2d');
-    ctx.drawImage(enrollVideo, 0, 0, enrollCanvas.width, enrollCanvas.height);
-    const base64Image = enrollCanvas.toDataURL('image/jpeg', 0.9);
+
+    // Take 5 frames ~0.4s apart (slight natural head movement) so enrolment is not one lucky shot
+    const frames = [];
+    for (let i = 0; i < 5; i++) {
+        snapCamBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span> Capturing ${i + 1}/5 - hold still, look at the camera`;
+        ctx.drawImage(enrollVideo, 0, 0, enrollCanvas.width, enrollCanvas.height);
+        frames.push(enrollCanvas.toDataURL('image/jpeg', 0.92));
+        await new Promise(r => setTimeout(r, 400));
+    }
+    snapCamBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Processing Face...';
 
     try {
         const resp = await fetchJson(`/api/students/${currentStudentId}/register-face`, {
             method: 'POST',
-            body: JSON.stringify({ image: base64Image })
+            body: JSON.stringify({ images: frames })
         });
 
         resultMsg.className = 'alert alert-success d-flex align-items-center gap-2 mt-3';

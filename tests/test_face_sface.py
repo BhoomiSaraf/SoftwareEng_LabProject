@@ -78,3 +78,33 @@ def test_stale_embeddings_from_another_backend_are_dropped(svc, tmp_path):
     np.savez_compressed(path, student_OLD=np.ones((1, 576), np.float32), student_NEW=np.ones((1, 128), np.float32))
     assert svc.load_embeddings(path)
     assert svc.get_registered_student_ids() == ['NEW']
+
+
+def test_background_does_not_affect_recognition(svc):
+    img = cv2.imread(PHOTO)
+    svc.register_student_face('STU001', img)
+    row = svc._detect_rows(img)[0]
+    x, y, bw, bh = [int(v) for v in row[:4]]
+    mask = np.zeros(img.shape[:2], np.uint8)
+    cv2.ellipse(mask, (x + bw // 2, y + bh // 2), (int(bw * .75), int(bh * .85)), 0, 0, 360, 255, -1)
+    m = cv2.GaussianBlur(mask, (31, 31), 0)[..., None] / 255.0
+    for bg in (np.full_like(img, 25), np.random.default_rng(3).integers(0, 255, img.shape, dtype=np.uint8)):
+        swapped = (img * m + bg * (1 - m)).astype(np.uint8)
+        res = svc.match_face(swapped, allowed_student_ids=['STU001'])
+        assert res['status'] == 'MATCHED' and res['student_id'] == 'STU001'
+
+
+def test_one_photo_gives_several_samples_and_rotation_is_tolerated(svc):
+    img = cv2.imread(PHOTO)
+    svc.register_student_face('STU001', img)
+    assert svc.get_sample_count('STU001') >= 5
+    h, w = img.shape[:2]
+    rotated = cv2.warpAffine(img, cv2.getRotationMatrix2D((w / 2, h / 2), 12, 1), (w, h), borderValue=(120, 120, 120))
+    assert svc.match_face(rotated, allowed_student_ids=['STU001'])['status'] == 'MATCHED'
+
+
+def test_dark_frame_is_reported_as_low_quality_not_guessed(svc):
+    img = cv2.imread(PHOTO)
+    svc.register_student_face('STU001', img)
+    dark = cv2.convertScaleAbs(img, alpha=0.12, beta=0)
+    assert svc.match_face(dark)['status'] in ('LOW_QUALITY', 'NO_FACE_DETECTED')

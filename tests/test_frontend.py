@@ -106,10 +106,10 @@ def test_faculty_has_no_admin_controls(env):
 
 
 def test_faculty_only_sees_own_courses_and_students(env):
-    # FAC001 teaches CSE3132 (A, C) and CSE3113 (C); never CSE3109 (FAC006 only)
+    # FAC001 teaches only CSE3132 (A, C); CSE3109 belongs to other teachers
     env['login'](faculty_user('FAC001'))
     html = env['client'].get('/courses').data.decode()
-    assert 'CSE3132' in html and 'CSE3113' in html
+    assert 'CSE3132' in html and 'CSE3113' not in html
     assert 'CSE3109' not in html
     names = {s['name'] for s in env['dp'].get_all_students('FAC001')}
     assert 'Bhoomi Saraf' in names and 'Priya Patel' not in names      # Priya is section B only
