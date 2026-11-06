@@ -2,16 +2,11 @@
 
 {% block title %}Student Management - Smart Attendance System{% endblock %}
 
-{% set is_admin = session.get('user', {}).get('role') == 'admin' %}
-
 {% block content %}
 <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-4">
     <div>
-        <h2 class="h3 fw-bold mb-1">{{ 'Student Management' if is_admin else 'My Students' }}</h2>
-        <p class="text-slate-300 fs-sm mb-0">
-            {% if is_admin %}Register students, assign sections and capture reference face data
-            {% else %}Students in the course sections you teach (read-only; administrators manage records){% endif %}
-        </p>
+        <h2 class="h3 fw-bold mb-1">Student Management</h2>
+        <p class="text-slate-300 fs-sm mb-0">Register students, manage academic profiles, and capture reference face data</p>
     </div>
     {% if is_admin %}
     <div class="d-flex gap-2">
@@ -47,9 +42,9 @@
         <div class="col-md-2">
             <select id="sectionFilter" class="form-select form-tech-control">
                 <option value="all">All Sections</option>
-                {% for sec in sections %}
-                <option value="{{ sec|lower }}">Section {{ sec }}</option>
-                {% endfor %}
+                <option value="a">Section A</option>
+                <option value="b">Section B</option>
+                <option value="c">Section C</option>
             </select>
         </div>
         <div class="col-md-2">
@@ -77,7 +72,7 @@
                     <th>Email Address</th>
                     <th>Face Biometric Status</th>
                     <th>Courses</th>
-                    {% if is_admin %}<th class="text-end">Face Capture</th>{% endif %}
+                    <th class="text-end">Actions</th>
                 </tr>
             </thead>
             <tbody>
@@ -106,7 +101,7 @@
                         <td>
                             {% if student.has_face %}
                             <span class="badge badge-soft-success rounded-pill px-2 py-1 fs-xs">
-                                <i class="bi bi-check-circle-fill me-1"></i> Enrolled ({{ student.face_samples_count }} sample{{ 's' if student.face_samples_count != 1 }})
+                                <i class="bi bi-check-circle-fill me-1"></i> Registered ({{ student.face_samples_count|default(1) }} sample)
                             </span>
                             {% else %}
                             <span class="badge badge-soft-warning rounded-pill px-2 py-1 fs-xs">
@@ -117,8 +112,8 @@
                         <td class="text-slate-300 fs-xs">
                             {{ student.course_codes|join(', ') if student.course_codes else 'None' }}
                         </td>
-                        {% if is_admin %}
                         <td class="text-end">
+                            {% if is_admin %}
                             <button type="button" class="btn btn-sm btn-tech-outline rounded-pill px-3 fs-xs enroll-face-btn" 
                                     data-id="{{ student.id }}" 
                                     data-name="{{ student.name }}" 
@@ -127,14 +122,16 @@
                                 <i class="bi bi-camera me-1 text-primary"></i> 
                                 {{ 'Update Face' if student.has_face else 'Capture Face' }}
                             </button>
+                            {% else %}
+                            <span class="text-muted fs-xs"><i class="bi bi-lock me-1"></i>Admin Only</span>
+                            {% endif %}
                         </td>
-                        {% endif %}
                     </tr>
                     {% endfor %}
                 {% else %}
                     <tr>
                         <td colspan="7" class="text-center py-4 text-muted">
-                            {{ 'No students registered yet.' if is_admin else 'No students are assigned to your sections yet.' }}
+                            No students registered yet.
                         </td>
                     </tr>
                 {% endif %}
@@ -144,7 +141,7 @@
 </div>
 
 {% if is_admin %}
-<!-- Modal: Add Student -->
+<!-- Modal: Register New Student -->
 <div class="modal fade modal-tech" id="addStudentModal" tabindex="-1" aria-labelledby="addStudentModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
@@ -159,27 +156,26 @@
                 <div class="modal-body">
                     <div class="mb-3">
                         <label for="rollNo" class="form-label text-muted fs-xs text-uppercase fw-semibold">Roll Number / Student ID</label>
-                        <input type="text" class="form-tech-control form-control" id="rollNo" name="roll_no" placeholder="e.g. 229301120" required>
+                        <input type="text" class="form-tech-control form-control" id="rollNo" name="roll_no" placeholder="e.g. 21BCE045" required>
                     </div>
 
                     <div class="mb-3">
                         <label for="studentName" class="form-label text-muted fs-xs text-uppercase fw-semibold">Full Student Name</label>
-                        <input type="text" class="form-tech-control form-control" id="studentName" name="name" placeholder="Full name" required>
+                        <input type="text" class="form-tech-control form-control" id="studentName" name="name" placeholder="e.g. Alex Morgan" required>
                     </div>
 
                     <div class="mb-3">
                         <label for="studentEmail" class="form-label text-muted fs-xs text-uppercase fw-semibold">Institutional Email</label>
-                        <input type="email" class="form-tech-control form-control" id="studentEmail" name="email" placeholder="name.rollno@muj.manipal.edu" required>
+                        <input type="email" class="form-tech-control form-control" id="studentEmail" name="email" placeholder="e.g. alex.morgan@college.edu" required>
                     </div>
 
                     <div class="mb-3">
                         <label for="studentSection" class="form-label text-muted fs-xs text-uppercase fw-semibold">Class Section</label>
                         <select class="form-select form-tech-control" id="studentSection" name="section">
-                            {% for sec in sections %}
-                            <option value="{{ sec }}" {{ 'selected' if loop.first }}>Section {{ sec }}</option>
-                            {% endfor %}
+                            <option value="A" selected>Section A</option>
+                            <option value="B">Section B</option>
+                            <option value="C">Section C</option>
                         </select>
-                        <div class="form-text text-slate-300 fs-xs">The student is enrolled automatically in every course taught to this section.</div>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -192,8 +188,8 @@
         </div>
     </div>
 </div>
-
 {% endif %}
+
 {% if is_admin %}
 <!-- Modal: Face Enrollment / Capture Modal -->
 <div class="modal fade modal-tech" id="faceEnrollModal" tabindex="-1" aria-labelledby="faceEnrollModalLabel" aria-hidden="true">
@@ -210,8 +206,8 @@
                     <div class="d-flex align-items-center justify-content-between p-3 rounded-3 bg-dark-glass border border-subtle">
                         <div>
                             <span class="text-muted fs-xs text-uppercase fw-semibold d-block">Target Student</span>
-                            <span class="fw-bold text-white fs-5" id="targetStudentName"></span>
-                            <span class="badge bg-dark-card text-primary border border-primary-subtle font-monospace ms-2" id="targetStudentRoll"></span>
+                            <span class="fw-bold text-white fs-5" id="targetStudentName">Alex Morgan</span>
+                            <span class="badge bg-dark-card text-primary border border-primary-subtle font-monospace ms-2" id="targetStudentRoll">21BCE045</span>
                         </div>
                         <div id="targetFaceStatus">
                             <!-- Injected dynamically -->
@@ -219,42 +215,51 @@
                     </div>
                 </div>
 
-                <!-- Tabs: Webcam Capture or Photo Upload -->
-                <ul class="nav nav-pills mb-3 gap-2" id="captureTabs" role="tablist">
-                    <li class="nav-item" role="presentation">
-                        <button class="nav-link active rounded-pill px-3 fs-xs" id="webcam-tab" data-bs-toggle="pill" data-bs-target="#webcamTabPane" type="button" role="tab">
-                            <i class="bi bi-camera-video-fill me-1"></i> Capture via Webcam
+                <!-- Mode & Camera Action Toolbar (All in one line) -->
+                <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 p-2 rounded-3 bg-dark-glass border border-subtle mb-3">
+                    <ul class="nav nav-pills gap-2 m-0" id="captureTabs" role="tablist">
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link active rounded-pill px-3 py-1 fs-xs fw-semibold" id="webcam-tab" data-bs-toggle="pill" data-bs-target="#webcamTabPane" type="button" role="tab">
+                                <i class="bi bi-camera-video-fill me-1"></i> Register via Webcam
+                            </button>
+                        </li>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link rounded-pill px-3 py-1 fs-xs fw-semibold" id="upload-tab" data-bs-toggle="pill" data-bs-target="#uploadTabPane" type="button" role="tab">
+                                <i class="bi bi-cloud-arrow-up-fill me-1"></i> Photo Upload
+                            </button>
+                        </li>
+                    </ul>
+                    <div class="d-flex align-items-center gap-2" id="webcamTopBarControls">
+                        <button type="button" id="startEnrollCamBtn" class="btn btn-sm btn-outline-info rounded-pill px-3 fs-xs fw-semibold">
+                            <i class="bi bi-camera-fill me-1"></i> Start Camera
                         </button>
-                    </li>
-                    <li class="nav-item" role="presentation">
-                        <button class="nav-link rounded-pill px-3 fs-xs" id="upload-tab" data-bs-toggle="pill" data-bs-target="#uploadTabPane" type="button" role="tab">
-                            <i class="bi bi-cloud-arrow-up-fill me-1"></i> Upload Image File
-                        </button>
-                    </li>
-                </ul>
+                    </div>
+                </div>
 
                 <div class="tab-content" id="captureTabsContent">
                     <!-- Tab 1: Webcam -->
                     <div class="tab-pane fade show active" id="webcamTabPane" role="tabpanel">
-                        <div class="camera-container mb-3" style="max-height: 340px;">
+                        <div class="camera-container mb-3" style="min-height: 380px; max-height: 460px;">
                             <video id="enrollVideo" autoplay playsinline muted></video>
                             <canvas id="enrollCanvas" class="d-none"></canvas>
                             <div class="scanner-overlay">
                                 <div class="d-flex justify-content-between align-items-center">
                                     <span class="badge bg-dark-card border border-subtle text-muted fs-xxs">WEBCAM LIVE</span>
+                                    <span id="cameraStatusPill" class="badge bg-info-subtle text-info border border-info-subtle fs-xxs d-none">
+                                        <i class="bi bi-record-fill text-danger me-1"></i>CAMERA ACTIVE
+                                    </span>
                                 </div>
                                 <div class="scan-crosshairs"></div>
                                 <div class="text-center">
-                                    <span class="text-muted fs-xxs bg-dark-card py-1 px-2 rounded-pill border border-subtle">Position face in center frame</span>
+                                    <span class="text-white fs-xs bg-dark-glass py-1 px-3 rounded-pill border border-subtle shadow-sm">
+                                        Align face inside the targeting frame
+                                    </span>
                                 </div>
                             </div>
                         </div>
 
                         <div class="d-flex justify-content-center gap-2">
-                            <button type="button" id="startEnrollCamBtn" class="btn btn-tech-outline rounded-pill px-3 fs-sm">
-                                <i class="bi bi-camera me-1"></i> Start Camera
-                            </button>
-                            <button type="button" id="snapEnrollCamBtn" class="btn btn-primary rounded-pill px-4 fs-sm" disabled>
+                            <button type="button" id="snapEnrollCamBtn" class="btn btn-primary rounded-pill px-4 py-2 fs-sm fw-semibold shadow-sm" disabled>
                                 <i class="bi bi-record-circle me-1"></i> Capture &amp; Register Reference Face
                             </button>
                         </div>
@@ -269,7 +274,7 @@
                             <input class="form-control form-tech-control mx-auto mt-2" type="file" id="faceImageFile" accept="image/*" style="max-width: 320px;">
                         </div>
                         <div id="imageFilePreviewContainer" class="text-center d-none mb-3">
-                            <img id="imageFilePreview" class="rounded-3 border border-subtle" style="max-height: 200px;" alt="Face Preview">
+                            <img id="imageFilePreview" class="rounded-3 border border-subtle" style="max-height: 220px;" alt="Face Preview">
                         </div>
                         <div class="text-center">
                             <button type="button" id="uploadEnrollBtn" class="btn btn-primary rounded-pill px-4 fs-sm" disabled>
@@ -336,7 +341,7 @@ statusFilter?.addEventListener('change', filterStudents);
 courseFilter?.addEventListener('change', filterStudents);
 sectionFilter?.addEventListener('change', filterStudents);
 
-// Face Enrollment Modal Logic (admin only: the modal is not rendered for faculty)
+// Face Enrollment Modal Logic
 {% if is_admin %}
 let currentStudentId = null;
 let enrollStream = null;
@@ -367,6 +372,18 @@ document.querySelectorAll('.enroll-face-btn').forEach(btn => {
     });
 });
 
+// Tab switching toolbar sync
+const uploadTab = document.getElementById('upload-tab');
+const webcamTab = document.getElementById('webcam-tab');
+const webcamTopBarControls = document.getElementById('webcamTopBarControls');
+
+uploadTab?.addEventListener('shown.bs.tab', () => {
+    if (webcamTopBarControls) webcamTopBarControls.classList.add('d-none');
+});
+webcamTab?.addEventListener('shown.bs.tab', () => {
+    if (webcamTopBarControls) webcamTopBarControls.classList.remove('d-none');
+});
+
 // Stop camera stream when modal hides
 document.getElementById('faceEnrollModal')?.addEventListener('hidden.bs.modal', () => {
     if (enrollStream) {
@@ -374,17 +391,27 @@ document.getElementById('faceEnrollModal')?.addEventListener('hidden.bs.modal', 
         enrollStream = null;
     }
     if (enrollVideo) enrollVideo.srcObject = null;
-    if (startCamBtn) startCamBtn.disabled = false;
+    if (startCamBtn) {
+        startCamBtn.disabled = false;
+        startCamBtn.innerHTML = '<i class="bi bi-camera-fill me-1"></i> Start Camera';
+    }
     if (snapCamBtn) snapCamBtn.disabled = true;
+    const pill = document.getElementById('cameraStatusPill');
+    if (pill) pill.classList.add('d-none');
 });
 
 // Start Camera
 startCamBtn?.addEventListener('click', async () => {
     try {
-        enrollStream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+        enrollStream = await navigator.mediaDevices.getUserMedia({
+            video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' }
+        });
         enrollVideo.srcObject = enrollStream;
         startCamBtn.disabled = true;
-        snapCamBtn.disabled = false;
+        startCamBtn.innerHTML = '<i class="bi bi-camera-video-fill me-1"></i> Camera Active';
+        if (snapCamBtn) snapCamBtn.disabled = false;
+        const pill = document.getElementById('cameraStatusPill');
+        if (pill) pill.classList.remove('d-none');
         showToast('Webcam initialized for face capture', 'info');
     } catch (err) {
         console.error('Camera access error:', err);

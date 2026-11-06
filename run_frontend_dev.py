@@ -120,6 +120,15 @@ def api_register_face(student_id):
             'message': res.get('message', 'Face registration failed.')
         }), 400
 
+    # Keep the reference photo so the embedding can be rebuilt if the recognition model changes
+    try:
+        faces_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'faces')
+        os.makedirs(faces_dir, exist_ok=True)
+        import cv2
+        cv2.imwrite(os.path.join(faces_dir, f"{student['student_id']}.jpg"), face_service.decode_image(image_data))
+    except Exception:
+        logger.warning("Could not store reference photo for %s", student['student_id'])
+
     emb_path = get_embeddings_path()
     save_ok = face_service.save_embeddings(emb_path)
     if not save_ok or not os.path.exists(emb_path):

@@ -73,7 +73,7 @@ class FaceRecognitionService:
         self,
         similarity_threshold: Optional[float] = None,
         haar_cascade_path: Optional[str] = None,
-        backend: str = "legacy",
+        backend: Optional[str] = None,
         models_dir: Optional[str] = None
     ):
         """
@@ -355,6 +355,41 @@ class FaceRecognitionService:
         norm = np.linalg.norm(feat)
         return feat / norm if norm > 1e-8 else feat
 
+    @staticmethod
+    def _apply_nms(boxes: List[Tuple[int, int, int, int]], overlap_thresh: float = 0.35) -> List[Tuple[int, int, int, int]]:
+        """Apply Non-Maximum Suppression to collapse overlapping candidate boxes on the same face."""
+        if not boxes:
+            return []
+        boxes_arr = np.array(boxes, dtype=float)
+        x1 = boxes_arr[:, 0]
+        y1 = boxes_arr[:, 1]
+        x2 = boxes_arr[:, 0] + boxes_arr[:, 2]
+        y2 = boxes_arr[:, 1] + boxes_arr[:, 3]
+        areas = boxes_arr[:, 2] * boxes_arr[:, 3]
+        order = areas.argsort()[::-1]
+
+        keep = []
+        while order.size > 0:
+            i = order[0]
+            keep.append(i)
+            if order.size == 1:
+                break
+            xx1 = np.maximum(x1[i], x1[order[1:]])
+            yy1 = np.maximum(y1[i], y1[order[1:]])
+            xx2 = np.minimum(x2[i], x2[order[1:]])
+            yy2 = np.minimum(y2[i], y2[order[1:]])
+
+            w = np.maximum(0.0, xx2 - xx1)
+            h = np.maximum(0.0, yy2 - yy1)
+            inter = w * h
+            min_area = np.minimum(areas[i], areas[order[1:]])
+            overlap = inter / np.maximum(1e-6, min_area)
+
+            inds = np.where(overlap <= overlap_thresh)[0]
+            order = order[inds + 1]
+
+        return [tuple(int(v) for v in boxes[k]) for k in keep]
+
     def detect_faces(
         self,
         image: np.ndarray,
@@ -399,14 +434,20 @@ class FaceRecognitionService:
 
         # Sort detections by area descending (largest first)
         sorted_faces = sorted(faces, key=lambda f: f[2] * f[3], reverse=True)
-        largest_area = sorted_faces[0][2] * sorted_faces[0][3]
 
-        # Filter out minor background false-positives (like posters/wall art):
-        # Only keep candidate faces that are at least 35% of the largest face area
+        # Apply Non-Maximum Suppression to collapse overlapping candidate boxes on the same face
+        nms_faces = self._apply_nms(sorted_faces, overlap_thresh=0.35)
+        if not nms_faces:
+            return []
+
+        largest_area = nms_faces[0][2] * nms_faces[0][3]
+
+        # Filter out minor background false-positives and non-face aspect ratio streaks:
+        # Keep candidate faces that have human face aspect ratios and sufficient relative area
         significant_faces = [
             (int(x), int(y), int(w), int(h))
-            for (x, y, w, h) in sorted_faces
-            if (w * h) >= 0.35 * largest_area
+            for (x, y, w, h) in nms_faces
+            if (0.65 <= (float(w) / max(1, float(h))) <= 1.55) and ((w * h) >= 0.40 * largest_area)
         ]
 
         return significant_faces
@@ -535,7 +576,7 @@ class FaceRecognitionService:
                 "status": "MULTIPLE_FACES_DETECTED",
                 "face_count": len(faces),
                 "student_id": student_key,
-                "message": f"{len(faces)} faces detected. Registration requires exactly one face in frame."
+                "message": f"{len(faces)} faces detected. Registration requires exactly one face in frame. Ensure only one person is in view."
             }
 
         # Exactly 1 face found: crop with safe bounds
@@ -776,4 +817,4 @@ class FaceRecognitionService:
 
 
 # Global singleton instance for easy import and sharing across routes
-face_service = FaceRecognitionService(backend=os.environ.get('FACE_BACKEND', 'legacy'))
+face_service = FaceRecognitionService()

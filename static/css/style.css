@@ -391,11 +391,11 @@ select.form-tech-control option {
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    width: 60%;
-    height: 65%;
-    border: 2px dashed rgba(59, 130, 246, 0.7);
-    border-radius: 16px;
-    box-shadow: inset 0 0 20px rgba(37, 99, 235, 0.2);
+    width: 78%;
+    height: 82%;
+    border: 2.5px dashed rgba(59, 130, 246, 0.85);
+    border-radius: 24px;
+    box-shadow: inset 0 0 25px rgba(37, 99, 235, 0.25);
     animation: scanner-pulse 2.2s infinite ease-in-out;
 }
 
