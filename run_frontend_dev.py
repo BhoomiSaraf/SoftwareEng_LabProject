@@ -62,76 +62,44 @@ def get_db_path():
 
 
 def find_canonical_student(identifier, db_path=None):
-    """Resolve any input identifier (canonical student_id, roll_number, or numeric index) to the DB record."""
-    if identifier is None:
-        return None
-    raw_id = str(identifier).strip()
+    """Resolve a canonical student_id (e.g. STU001) or a roll number to the DB record."""
+    raw_id = str(identifier).strip() if identifier is not None else ''
     if not raw_id:
         return None
-
-    # 1. Direct student_id match (e.g. STU001)
-    student = StudentModel.get_by_id(raw_id, db_path=db_path)
-    if student:
-        return student
-
-    # 2. Roll number match (e.g. 21BCE001 or 229301045)
-    student = StudentModel.get_by_roll(raw_id, db_path=db_path)
-    if student:
-        return student
-
-    # 3. Numeric ID match (e.g. 1 -> STU001)
-    if raw_id.isdigit():
-        formatted_sid = f"STU{int(raw_id):03d}"
-        student = StudentModel.get_by_id(formatted_sid, db_path=db_path)
-        if student:
-            return student
-
-    # 4. Fallback search via data_provider
-    dp = getattr(app, 'data_provider', data_provider)
-    if dp:
-        dp_student = dp.get_student_by_id(int(raw_id)) if raw_id.isdigit() else dp.get_student_by_roll(raw_id)
-        if dp_student and dp_student.get('student_id'):
-            student = StudentModel.get_by_id(dp_student['student_id'], db_path=db_path)
-            if student:
-                return student
-
-    return None
+    return StudentModel.get_by_id(raw_id, db_path=db_path) or StudentModel.get_by_roll(raw_id, db_path=db_path)
 
 
 def format_student_payload(student):
     sid = student['student_id']
-    numeric_id = int(sid[3:]) if sid.startswith('STU') and sid[3:].isdigit() else sid
     roll = student.get('roll_number') or student.get('roll_no', '')
     return {
-        'id': numeric_id,
+        'id': sid,
         'student_id': sid,
         'roll_no': roll,
         'roll_number': roll,
         'name': student['name'],
-        'email': student['email']
+        'email': student['email'],
+        'section': (student.get('section') or 'A').upper(),
     }
 
 
 def resolve_course_record(course_identifier, db_path=None):
-    """Resolve numeric course ID, course_code, or course_id to DB row."""
-    if course_identifier is None:
+    """Resolve a course_id or course_code to its DB row."""
+    c_str = str(course_identifier).strip() if course_identifier is not None else ''
+    if not c_str:
         return None
-    c_str = str(course_identifier).strip()
     course = CourseModel.get_by_id(c_str, db_path=db_path)
     if course:
         return course
-
-    dp = getattr(app, 'data_provider', data_provider)
-    courses = dp.get_all_courses() if (dp and hasattr(dp, 'get_all_courses')) else CourseModel.get_all(db_path=db_path)
-    for c in courses:
-        if str(c['id']) == c_str or str(c['course_id']) == c_str or str(c['code']).lower() == c_str.lower():
-            return CourseModel.get_by_id(c['course_id'], db_path=db_path)
+    for c in CourseModel.get_all(db_path=db_path):
+        if str(c['course_code']).lower() == c_str.lower():
+            return c
     return None
 
 
 # Biometric Face Registration Endpoint
 @app.route('/api/students/<student_id>/register-face', methods=['POST'])
-@role_required('faculty', 'admin')
+@role_required('admin')
 def api_register_face(student_id):
     data = request.get_json(silent=True) or {}
     image_data = data.get('image')
@@ -143,7 +111,7 @@ def api_register_face(student_id):
     if not student:
         return jsonify({'error': 'Student not found'}), 404
 
-    # Real biometric face enrollment via Haar Cascade + MobileNetV3
+    # Face enrolment (YuNet detection + SFace embedding), stored under the canonical student_id only
     res = face_service.register_student_face(student['student_id'], image_data)
     if not res.get('success'):
         return jsonify({
@@ -152,12 +120,6 @@ def api_register_face(student_id):
             'message': res.get('message', 'Face registration failed.')
         }), 400
 
-    # Also register aliases
-    face_service.register_student_face(student['roll_number'], image_data)
-    num_id = student['student_id'][3:] if student['student_id'].startswith('STU') and student['student_id'][3:].isdigit() else str(student_id)
-    face_service.register_student_face(str(int(num_id)), image_data)
-
-    # Persist numeric embeddings to configured storage path
     emb_path = get_embeddings_path()
     save_ok = face_service.save_embeddings(emb_path)
     if not save_ok or not os.path.exists(emb_path):
@@ -167,19 +129,14 @@ def api_register_face(student_id):
             'message': 'Failed to persist face embedding to configured storage.'
         }), 500
 
-    # Update SQLite database only after storage persistence is confirmed
+    # Update SQLite only after storage persistence is confirmed
     StudentModel.set_face_registered(student['student_id'], True, db_path=db_path)
-    dp = getattr(app, 'data_provider', data_provider)
-    if dp:
-        dp.set_student_face_registered(student['student_id'], True)
-
-    samples_count = len(face_service._registered_embeddings.get(student['student_id'], []))
 
     return jsonify({
         'status': 'success',
-        'message': f"Face biometric embeddings computed and registered for {student['name']} ({student['roll_number']}).",
-        'embedding_dim': res.get('embedding_dim', 576),
-        'samples_count': samples_count
+        'message': f"Face registered for {student['name']} ({student['roll_number']}).",
+        'embedding_dim': res.get('embedding_dim', face_service.embedding_dim),
+        'samples_count': face_service.get_sample_count(student['student_id'])
     })
 
 
@@ -192,21 +149,19 @@ def api_course_enrollment_data(course_id):
         return jsonify({'error': 'Course not found'}), 404
 
     all_students = data_provider.get_all_students()
-    enrolled_students = EnrollmentModel.get_enrolled_students(course['course_id'], db_path=db_path)
-    enrolled_sid_set = {s['student_id'] for s in enrolled_students}
-
-    enrolled_ids = [s['id'] for s in all_students if s['student_id'] in enrolled_sid_set]
+    enrolled_sid_set = {s['student_id'] for s in EnrollmentModel.get_enrolled_students(course['course_id'], db_path=db_path)}
 
     return jsonify({
         'course_id': course['course_id'],
         'course_code': course['course_code'],
+        'sections': data_provider.get_sections(),
         'students': all_students,
-        'enrolled_ids': enrolled_ids
+        'enrolled_ids': [s['student_id'] for s in all_students if s['student_id'] in enrolled_sid_set]
     })
 
 
 @app.route('/api/courses/<course_id>/enroll', methods=['POST'])
-@role_required('faculty', 'admin')
+@role_required('admin')
 def api_enroll_course(course_id):
     data = request.get_json(silent=True) or {}
     raw_student_ids = data.get('student_ids', [])
@@ -216,7 +171,7 @@ def api_enroll_course(course_id):
     if not course:
         return jsonify({'error': 'Course not found'}), 404
 
-    # Verify course instructor ownership
+    # Verify course instructor ownership (admin bypasses)
     user = flask_session.get('user', {})
     if user.get('role') != 'admin' and user.get('faculty_id') and course.get('faculty_id'):
         if course['faculty_id'] != user.get('faculty_id'):
@@ -226,26 +181,19 @@ def api_enroll_course(course_id):
                 'message': 'You are not authorized to modify enrollments for another instructor\'s course.'
             }), 403
 
-    actual_course_id = course['course_id']
-
-    # Update enrollments in SQLite database
     import database
     conn = database.get_db_connection(db_path)
-    cursor = conn.cursor()
     try:
-        # Delete existing enrollments for this course
-        cursor.execute("DELETE FROM enrollments WHERE course_id = ?;", (actual_course_id,))
-
+        conn.execute("DELETE FROM enrollments WHERE course_id = ?;", (course['course_id'],))
         enrolled_count = 0
         for raw_sid in raw_student_ids:
             st = find_canonical_student(raw_sid, db_path=db_path)
             if st:
-                cursor.execute(
+                conn.execute(
                     "INSERT OR IGNORE INTO enrollments (course_id, student_id) VALUES (?, ?);",
-                    (actual_course_id, st['student_id'])
+                    (course['course_id'], st['student_id'])
                 )
                 enrolled_count += 1
-
         conn.commit()
     finally:
         conn.close()
@@ -334,10 +282,19 @@ def api_recognize(session_id):
     if not face_service.get_registered_student_ids() and emb_path and os.path.exists(emb_path):
         face_service.load_embeddings(emb_path)
 
-    # 2. Perform biometric face matching via Haar Cascade + MobileNetV3
-    rec_threshold = getattr(Config, 'RECOGNITION_THRESHOLD', 0.65)
+    # 2. Match the face against THIS session's roster only (course + section)
+    rec_threshold = getattr(Config, 'RECOGNITION_THRESHOLD', None)
+    roster_ids = [
+        s['student_id'] for s in
+        EnrollmentModel.get_enrolled_students(session['course_id'], db_path=db_path, section=session.get('section'))
+    ]
     try:
-        match_result = face_service.match_face(image, threshold=rec_threshold)
+        match_result = face_service.match_face(image, allowed_student_ids=roster_ids, threshold=rec_threshold)
+        if match_result.get('status') == 'UNKNOWN_FACE':
+            # Not on the roster. Is it a known student from elsewhere? Give the teacher a useful reason.
+            wider = face_service.match_face(image, threshold=rec_threshold)
+            if wider.get('status') == 'MATCHED':
+                match_result = wider
     except Exception as e:
         logger.exception("Face recognition matching exception")
         return jsonify({'status': 'recognition_error', 'message': 'Face recognition processing failed.'}), 500
@@ -361,7 +318,7 @@ def api_recognize(session_id):
         return jsonify({
             'status': 'unrecognized',
             'confidence': conf,
-            'message': match_result.get('message', f"Face detected (highest confidence {conf:.1%} is below recognition threshold 65%).")
+            'message': match_result.get('message', 'Face detected but not recognised as an enrolled student.')
         }), 200
 
     elif status == 'ERROR':
@@ -424,6 +381,13 @@ def api_recognize(session_id):
         elif "not enrolled" in msg_lower or "enrollment error" in msg_lower:
             return jsonify({
                 'status': 'not_enrolled',
+                'student': student_payload,
+                'confidence': confidence,
+                'message': msg
+            }), 200
+        elif "section mismatch" in msg_lower or ("section" in msg_lower and "mismatch" in msg_lower):
+            return jsonify({
+                'status': 'wrong_section',
                 'student': student_payload,
                 'confidence': confidence,
                 'message': msg
@@ -513,6 +477,12 @@ def api_mark_manual(session_id):
                 'student': student_payload,
                 'message': msg
             }), 200
+        elif "section mismatch" in msg_lower:
+            return jsonify({
+                'status': 'wrong_section',
+                'student': student_payload,
+                'message': msg
+            }), 200
         elif "active" in msg_lower or "session" in msg_lower:
             return jsonify({
                 'status': 'session_inactive',
@@ -568,52 +538,35 @@ def api_end_session(session_id):
 @role_required('faculty', 'admin')
 def api_export_csv():
     course_id = request.args.get('course_id', 'all')
+    section = request.args.get('section', 'all')
+    section = None if section.lower() == 'all' else section.upper()
     db_path = get_db_path()
+
+    user = flask_session.get('user', {})
+    scope = None if user.get('role') == 'admin' else user.get('faculty_id')
+    dp = getattr(app, 'data_provider', data_provider)
+    rep = dp.get_reports_data(None if course_id.lower() == 'all' else course_id, section, faculty_id=scope)
+
+    if course_id.lower() != 'all' and not any(
+        c['course_id'] == course_id or c['code'].lower() == course_id.lower() for c in rep['courses']
+    ):
+        return jsonify({'error': f"Course '{course_id}' not found"}), 404
 
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow([
-        'Roll Number',
-        'Student Name',
-        'Email',
-        'Course Code',
-        'Total Sessions',
-        'Attended Sessions',
-        'Attendance Percentage',
-        'Eligibility Status'
-    ])
+    writer.writerow(['Roll Number', 'Student Name', 'Section', 'Course Code', 'Total Sessions',
+                     'Attended Sessions', 'Attendance Percentage', 'Eligibility Status'])
+    for sr in rep['student_reports']:
+        pct = sr['percentage']
+        writer.writerow([
+            sr['roll_no'], sr['student_name'], sr['section'], sr['course_code'],
+            sr['total_sessions'], sr['attended_sessions'],
+            f"{pct}%" if pct is not None else 'N/A',
+            'No sessions yet' if pct is None else ('Low Attendance Warning' if pct < 75.0 else 'Eligible'),
+        ])
 
-    if course_id and course_id != 'all':
-        course = resolve_course_record(course_id, db_path=db_path)
-        if not course:
-            return jsonify({'error': f"Course '{course_id}' not found"}), 404
-        target_courses = [course]
-        filename = f"attendance_report_{course['course_code']}.csv"
-    else:
-        dp = getattr(app, 'data_provider', data_provider)
-        courses = dp.get_all_courses() if (dp and hasattr(dp, 'get_all_courses')) else CourseModel.get_all(db_path=db_path)
-        target_courses = [resolve_course_record(c['course_id'], db_path=db_path) for c in courses]
-        target_courses = [c for c in target_courses if c]
-        filename = "attendance_report_all.csv"
-
-    for crs in target_courses:
-        rep = AttendanceService.get_course_attendance_report(crs['course_id'], db_path=db_path)
-        if 'student_reports' in rep:
-            course_code = crs.get('course_code') or crs['course_id']
-            total_sessions = rep.get('total_sessions_held', 0)
-            for sr in rep.get('student_reports', []):
-                writer.writerow([
-                    sr['roll_number'],
-                    sr['name'],
-                    sr['email'],
-                    course_code,
-                    total_sessions,
-                    sr['attended_sessions'],
-                    f"{sr['attendance_percentage']}%",
-                    'Low Attendance Warning' if sr['low_attendance_warning'] else 'Eligible'
-                ])
-
-    output.seek(0)
+    name = 'all' if course_id.lower() == 'all' else course_id.replace('CRS-', '')
+    filename = f"attendance_report_{name}{'_' + section if section else ''}.csv"
     return Response(
         output.getvalue(),
         mimetype='text/csv',
@@ -676,6 +629,6 @@ if __name__ == '__main__':
     print("\n" + "="*70)
     print(" Smart Attendance System - Frontend Presentation Tier")
     print(" Accessible at: http://127.0.0.1:5000")
-    print(" Demo Login: faculty@college.edu / faculty123")
+    print(" Seeded logins: see README (admin / admin123, faculty / faculty123)")
     print("="*70 + "\n")
     app.run(debug=False, use_reloader=False, host='127.0.0.1', port=5000)

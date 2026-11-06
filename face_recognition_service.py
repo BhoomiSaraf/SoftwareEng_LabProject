@@ -1,11 +1,12 @@
 """
 Face Recognition Service Module
-Part of the Smart Attendance System MVP (Manipal University Jaipur)
+Part of the Smart Attendance System (Manipal University Jaipur)
 
 Responsibilities:
 1. Open and read webcam frames using OpenCV safely.
-2. Detect faces using OpenCV Haar Cascade Classifier.
-3. Generate normalized embeddings using a lightweight pretrained model (MobileNetV3).
+2. Detect faces with OpenCV YuNet (Haar Cascade fallback).
+3. Generate normalized face embeddings with OpenCV SFace (128-d, trained for face verification).
+   If the ONNX models are missing, a legacy ImageNet MobileNetV3 extractor is used (low accuracy).
 4. Match captured faces against registered embeddings using cosine similarity.
 5. Return recognized student ID or an explicit unknown/no-face/multi-face status.
 6. Handle missing cameras, no-face frames, multiple faces, and decode errors gracefully.
@@ -61,24 +62,59 @@ class FaceRecognitionService:
         haar_cascade_path (str): Path to Haar Cascade XML file for face detection.
     """
 
+    # Cosine-similarity cut-offs per embedding backend. SFace's published verification
+    # threshold is 0.363; ImageNet features are not face-discriminative so need a high bar.
+    DEFAULT_THRESHOLDS = {"sface": 0.45, "legacy": 0.70}
+    # Winner must beat the runner-up (a different student) by this much, else the match is ambiguous.
+    AMBIGUITY_MARGIN = 0.04
+    MODELS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models_cv")
+
     def __init__(
         self,
-        similarity_threshold: float = 0.70,
-        haar_cascade_path: Optional[str] = None
+        similarity_threshold: Optional[float] = None,
+        haar_cascade_path: Optional[str] = None,
+        backend: str = "legacy",
+        models_dir: Optional[str] = None
     ):
         """
         Initialize the Face Recognition Service with models and face detectors.
-        
+
         Args:
-            similarity_threshold: Cosine similarity cutoff (default: 0.70).
+            similarity_threshold: Cosine similarity cutoff. Defaults to a value suited to the backend.
             haar_cascade_path: Custom path to haarcascade_frontalface_default.xml.
+            backend: 'auto' (SFace if the ONNX models exist), 'sface', or 'legacy'.
+                     Defaults to the FACE_BACKEND environment variable, else 'auto'.
+            models_dir: Directory holding yunet.onnx and sface.onnx.
         """
-        self.similarity_threshold = float(similarity_threshold)
-        
+        backend = backend or os.environ.get("FACE_BACKEND", "auto")
+
         # In-memory dictionary: student_id (str) -> List[np.ndarray (1D float32)]
         self._registered_embeddings: Dict[str, List[np.ndarray]] = {}
 
-        # 1. Initialize Face Detector
+        # 1. Preferred pipeline: YuNet detector + SFace recognizer
+        self.backend = "legacy"
+        self.yunet = None
+        self.sface = None
+        models_dir = models_dir or self.MODELS_DIR
+        yunet_path = os.path.join(models_dir, "yunet.onnx")
+        sface_path = os.path.join(models_dir, "sface.onnx")
+        if backend in ("auto", "sface") and os.path.exists(yunet_path) and os.path.exists(sface_path):
+            try:
+                self.yunet = cv2.FaceDetectorYN.create(yunet_path, "", (320, 320), 0.8, 0.3, 5000)
+                self.sface = cv2.FaceRecognizerSF.create(sface_path, "")
+                self.backend = "sface"
+                logger.info("Face pipeline: YuNet detector + SFace recognizer (128-d).")
+            except Exception as e:
+                logger.warning(f"Could not load YuNet/SFace ({e}); using legacy pipeline.")
+        elif backend == "sface":
+            logger.warning(f"SFace requested but models not found in {models_dir}.")
+
+        self.similarity_threshold = float(
+            similarity_threshold if similarity_threshold is not None
+            else self.DEFAULT_THRESHOLDS[self.backend]
+        )
+
+        # 2. Fallback detector (Haar Cascade)
         if haar_cascade_path and os.path.exists(haar_cascade_path):
             self.detector_path = haar_cascade_path
         else:
@@ -89,13 +125,16 @@ class FaceRecognitionService:
         self.face_cascade = cv2.CascadeClassifier(self.detector_path)
         if self.face_cascade.empty():
             logger.error(f"Failed to load Haar Cascade from {self.detector_path}")
-        else:
-            logger.info("Face detector (Haar Cascade) loaded successfully.")
 
-        # 2. Initialize Pretrained Embedding Extractor
+        # 3. Legacy embedding extractor (only needed without SFace)
         self.torch_model = None
         self.transform = None
-        self._init_embedding_model()
+        if self.backend == "legacy":
+            self._init_embedding_model()
+
+    @property
+    def embedding_dim(self) -> int:
+        return 128 if self.backend == "sface" else 576
 
     def _init_embedding_model(self) -> None:
         """Initialize the embedding extraction model (MobileNetV3 or fallback)."""
@@ -298,6 +337,24 @@ class FaceRecognitionService:
     # Face Detection & Embedding Generation
     # -------------------------------------------------------------------------
 
+    def _detect_rows(self, image: np.ndarray) -> List[np.ndarray]:
+        """YuNet detections (x, y, w, h, 5 landmarks, score), largest first, minor ones dropped."""
+        h, w = image.shape[:2]
+        self.yunet.setInputSize((w, h))
+        _, faces = self.yunet.detect(image)
+        if faces is None or len(faces) == 0:
+            return []
+        rows = sorted(faces, key=lambda f: f[2] * f[3], reverse=True)
+        largest = rows[0][2] * rows[0][3]
+        return [r for r in rows if r[2] * r[3] >= 0.35 * largest and min(r[2], r[3]) >= 40]
+
+    def _embed_row(self, image: np.ndarray, row: np.ndarray) -> np.ndarray:
+        """Align the face using its landmarks and compute a unit-norm SFace embedding."""
+        aligned = self.sface.alignCrop(image, row)
+        feat = self.sface.feature(aligned).flatten().astype(np.float32)
+        norm = np.linalg.norm(feat)
+        return feat / norm if norm > 1e-8 else feat
+
     def detect_faces(
         self,
         image: np.ndarray,
@@ -319,6 +376,9 @@ class FaceRecognitionService:
         """
         if image is None or image.size == 0:
             return []
+
+        if self.backend == "sface":
+            return [tuple(int(v) for v in row[:4]) for row in self._detect_rows(image)]
 
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
@@ -364,7 +424,13 @@ class FaceRecognitionService:
         if face_crop is None or face_crop.size == 0:
             raise ValueError("Face crop is empty or None.")
 
-        # Primary: PyTorch MobileNetV3
+        if self.backend == "sface":
+            aligned = cv2.resize(face_crop, (112, 112))
+            feat = self.sface.feature(aligned).flatten().astype(np.float32)
+            norm = np.linalg.norm(feat)
+            return feat / norm if norm > 1e-8 else feat
+
+        # Legacy: PyTorch MobileNetV3
         if self.torch_model is not None and self.transform is not None:
             try:
                 rgb_crop = cv2.cvtColor(face_crop, cv2.COLOR_BGR2RGB)
@@ -487,7 +553,11 @@ class FaceRecognitionService:
         if crop.size == 0:
             crop = image[y:y+h, x:x+w]
 
-        embedding = self.extract_embedding(crop)
+        if self.backend == "sface":
+            rows = self._detect_rows(image)
+            embedding = self._embed_row(image, rows[0]) if rows else self.extract_embedding(crop)
+        else:
+            embedding = self.extract_embedding(crop)
 
         # Store in registry
         if student_key not in self._registered_embeddings:
@@ -567,7 +637,11 @@ class FaceRecognitionService:
         # Single face detected
         x, y, w, h = faces[0]
         crop = image[y:y+h, x:x+w]
-        probe_embedding = self.extract_embedding(crop)
+        if self.backend == "sface":
+            rows = self._detect_rows(image)
+            probe_embedding = self._embed_row(image, rows[0]) if rows else self.extract_embedding(crop)
+        else:
+            probe_embedding = self.extract_embedding(crop)
 
         # Determine target candidates
         if allowed_student_ids is not None:
@@ -585,20 +659,29 @@ class FaceRecognitionService:
                 "message": "Face detected, but no enrolled student records are available to compare against."
             }
 
-        best_student_id = None
-        best_similarity = -1.0
-
+        # Best similarity per student (a student may have several samples)
+        per_student = {}
         for sid, emb_list in candidates.items():
             for enrolled_emb in emb_list:
-                # Cosine similarity for unit vectors: dot product
+                if enrolled_emb.shape != probe_embedding.shape:
+                    continue  # stale embedding from another backend
                 sim = float(np.dot(probe_embedding, enrolled_emb))
-                if sim > best_similarity:
-                    best_similarity = sim
-                    best_student_id = sid
+                if sim > per_student.get(sid, -1.0):
+                    per_student[sid] = sim
 
-        best_confidence = max(0.0, min(1.0, (best_similarity + 1.0) / 2.0 if best_similarity < 0 else best_similarity))
+        ranked = sorted(per_student.items(), key=lambda kv: kv[1], reverse=True)
+        best_student_id, best_similarity = ranked[0] if ranked else (None, -1.0)
+        runner_up = ranked[1][1] if len(ranked) > 1 else -1.0
 
         if best_student_id is not None and best_similarity >= match_threshold:
+            if best_similarity - runner_up < self.AMBIGUITY_MARGIN and runner_up >= match_threshold:
+                return {
+                    "status": "UNKNOWN_FACE",
+                    "student_id": None,
+                    "confidence": round(float(best_similarity), 4),
+                    "box": [x, y, w, h],
+                    "message": "Ambiguous match between two enrolled students. Please re-scan facing the camera."
+                }
             return {
                 "status": "MATCHED",
                 "student_id": str(best_student_id),
@@ -606,14 +689,13 @@ class FaceRecognitionService:
                 "box": [x, y, w, h],
                 "message": f"Student '{best_student_id}' recognized with confidence {best_similarity:.2%}."
             }
-        else:
-            return {
-                "status": "UNKNOWN_FACE",
-                "student_id": None,
-                "confidence": round(float(best_similarity), 4),
-                "box": [x, y, w, h],
-                "message": f"Unrecognized face (highest confidence {best_similarity:.2%} is below threshold {match_threshold:.2%})."
-            }
+        return {
+            "status": "UNKNOWN_FACE",
+            "student_id": None,
+            "confidence": round(max(float(best_similarity), 0.0), 4),
+            "box": [x, y, w, h],
+            "message": f"Unrecognized face (best similarity {max(best_similarity, 0.0):.2%} is below threshold {match_threshold:.2%})."
+        }
 
     # -------------------------------------------------------------------------
     # Persistence & Management of Numeric Embeddings
@@ -666,6 +748,9 @@ class FaceRecognitionService:
                 if key.startswith("student_"):
                     sid = key[len("student_"):]
                     matrix = data[key]
+                    if matrix.ndim != 2 or matrix.shape[1] != self.embedding_dim:
+                        logger.warning(f"Skipping '{sid}': embedding dim {matrix.shape[-1]} != {self.embedding_dim} (re-enrol required).")
+                        continue
                     self._registered_embeddings[sid] = [matrix[i] for i in range(matrix.shape[0])]
                     count += 1
             logger.info(f"Loaded {count} student embeddings from {filepath}.")
@@ -678,6 +763,12 @@ class FaceRecognitionService:
         """Return list of all registered student IDs."""
         return list(self._registered_embeddings.keys())
 
+    def get_sample_count(self, student_id: Union[int, str]) -> int:
+        return len(self._registered_embeddings.get(str(student_id), []))
+
+    def remove_student(self, student_id: Union[int, str]) -> bool:
+        return self._registered_embeddings.pop(str(student_id), None) is not None
+
     def clear_registry(self) -> None:
         """Clear in-memory registered embeddings."""
         self._registered_embeddings.clear()
@@ -685,4 +776,4 @@ class FaceRecognitionService:
 
 
 # Global singleton instance for easy import and sharing across routes
-face_service = FaceRecognitionService()
+face_service = FaceRecognitionService(backend=os.environ.get('FACE_BACKEND', 'legacy'))

@@ -4,6 +4,7 @@
 
 (function () {
     const courseFilter = document.getElementById('reportCourseFilter');
+    const sectionFilter = document.getElementById('reportSectionFilter');
     const statusFilter = document.getElementById('reportStatusFilter');
     const searchInput = document.getElementById('reportSearchInput');
     const exportBtn = document.getElementById('exportCsvBtn');
@@ -14,9 +15,17 @@
     const summaryEligible = document.getElementById('summaryEligibleCount');
     const summaryWarning = document.getElementById('summaryWarningCount');
 
-    // Filter Logic
+    // Course and section are server-side filters (percentages depend on them); reload with the choice.
+    function reloadWithScope() {
+        const params = new URLSearchParams();
+        if (courseFilter && courseFilter.value !== 'all') params.set('course_id', courseFilter.value);
+        if (sectionFilter && sectionFilter.value !== 'all') params.set('section', sectionFilter.value);
+        const qs = params.toString();
+        window.location.href = '/reports' + (qs ? '?' + qs : '');
+    }
+
+    // Status and text search only narrow the rows already on the page.
     function applyFilters() {
-        const selectedCourse = courseFilter?.value || 'all';
         const selectedStatus = statusFilter?.value || 'all';
         const q = (searchInput?.value || '').toLowerCase().trim();
 
@@ -25,20 +34,18 @@
         let warningCount = 0;
 
         reportRows.forEach(row => {
-            const course = row.dataset.course;
             const status = row.dataset.status;
             const name = row.dataset.name || '';
             const roll = row.dataset.roll || '';
 
-            const matchesCourse = selectedCourse === 'all' || course === selectedCourse;
             const matchesStatus = selectedStatus === 'all' || status === selectedStatus;
             const matchesQuery = !q || name.includes(q) || roll.includes(q);
 
-            if (matchesCourse && matchesStatus && matchesQuery) {
+            if (matchesStatus && matchesQuery) {
                 row.style.display = '';
                 visibleCount++;
                 if (status === 'eligible') eligibleCount++;
-                else warningCount++;
+                else if (status === 'warning') warningCount++;
             } else {
                 row.style.display = 'none';
             }
@@ -50,24 +57,26 @@
         if (summaryWarning) summaryWarning.textContent = warningCount;
     }
 
-    courseFilter?.addEventListener('change', applyFilters);
+    courseFilter?.addEventListener('change', reloadWithScope);
+    sectionFilter?.addEventListener('change', reloadWithScope);
     statusFilter?.addEventListener('change', applyFilters);
     searchInput?.addEventListener('input', applyFilters);
 
     // CSV Export Handler
     exportBtn?.addEventListener('click', async () => {
         const selectedCourse = courseFilter?.value || 'all';
+        const selectedSection = sectionFilter?.value || 'all';
         exportBtn.disabled = true;
         exportBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Generating CSV...';
 
         try {
             // Attempt backend export endpoint
-            const url = `/api/reports/export-csv?course_id=${encodeURIComponent(selectedCourse)}`;
+            const url = `/api/reports/export-csv?course_id=${encodeURIComponent(selectedCourse)}&section=${encodeURIComponent(selectedSection)}`;
             const response = await fetch(url);
 
             if (response.ok && response.headers.get('content-type')?.includes('text/csv')) {
                 const blob = await response.blob();
-                downloadBlob(blob, `smart_attendance_report_${selectedCourse}.csv`);
+                downloadBlob(blob, `attendance_${selectedCourse}_${selectedSection}.csv`);
                 showToast('Attendance report exported successfully', 'success');
             } else {
                 let errMessage = 'Failed to export CSV report from server.';

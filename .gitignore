@@ -65,3 +65,7 @@ Thumbs.db
 task*.txt
 task*_tests.py
 
+# Computer Vision pre-trained weights & caches
+models_cv/
+*.onnx
+

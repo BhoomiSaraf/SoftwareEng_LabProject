@@ -2,15 +2,15 @@
 
 [![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11-blue?logo=python)](https://www.python.org/)
 [![Flask](https://img.shields.io/badge/Framework-Flask%202.x-black?logo=flask)](https://flask.palletsprojects.com/)
-[![PyTorch](https://img.shields.io/badge/Inference-PyTorch%20MobileNetV3-EE4C2C?logo=pytorch)](https://pytorch.org/)
+[![SFace](https://img.shields.io/badge/Recognition-OpenCV%20YuNet%20%2B%20SFace-5C3EE8)](https://github.com/opencv/opencv_zoo)
 [![OpenCV](https://img.shields.io/badge/Vision-OpenCV%204.x-5C3EE8?logo=opencv)](https://opencv.org/)
 [![SQLite](https://img.shields.io/badge/Database-SQLite%203-003B57?logo=sqlite)](https://www.sqlite.org/)
-[![Tests](https://img.shields.io/badge/Tests-72%2F72%20Passing-brightgreen?logo=pytest)](file:///c:/Users/bhoom/Desktop/SoftwareEng_LabProject/tests)
+[![Tests](https://img.shields.io/badge/Tests-91%2F91%20Passing-brightgreen?logo=pytest)](file:///c:/Users/bhoom/Desktop/SoftwareEng_LabProject/tests)
 [![License](https://img.shields.io/badge/License-Academic%20Use-lightgrey.svg)]()
 
 > **Academic Project:** Software Engineering Laboratory (`CSE3132`)  
 > **Institution:** Department of Computer Science & Engineering, Manipal University Jaipur  
-> **Architecture:** Flask Web Application + SQLite Persistent Store + PyTorch MobileNetV3 Biometrics + Haar Cascade Detection
+> **Architecture:** Flask Web Application + SQLite Persistent Store + OpenCV YuNet face detection + SFace face embeddings
 
 ---
 
@@ -42,7 +42,7 @@
 
 The **Smart Attendance System** is an automated, secure, and privacy-first biometric attendance management platform designed to replace proxy-prone roll calls and manual paper sheets.
 
-The system integrates real-time optical face recognition with a relational database backend and strict role-based access controls. Camera frames captured via browser WebRTC or external hardware kiosks are analyzed using OpenCV Haar Cascades for face localization, and deep representations are extracted using a lightweight PyTorch **MobileNetV3** vision backbone generating **576-dimensional normalized embeddings**. Biometric verification is evaluated via cosine similarity matching against enrolled student templates.
+The system integrates real-time optical face recognition with a relational database backend and strict role-based access controls. Camera frames captured via browser WebRTC or external hardware kiosks are analyzed with OpenCV **YuNet** for face localization and landmark alignment, and identity embeddings are extracted with **SFace**, a network trained for face verification (**128-dimensional normalized embeddings**). Biometric verification is evaluated via cosine similarity matching against enrolled student templates.
 
 Attendance state transitions, duplicate prevention, session lifecycles, and academic eligibility criteria are enforced by a single authoritative service layer backed by SQLite.
 
@@ -68,9 +68,9 @@ flowchart TD
     end
 
     subgraph Vision["Biometric Face Recognition Service"]
-        C1["OpenCV Haar Cascade (Face Detection)"]
+        C1["OpenCV YuNet (Face Detection + Alignment)"]
         C2["CLAHE & Grayscale Normalization"]
-        C3["PyTorch MobileNetV3 (576-d Feature Extraction)"]
+        C3["OpenCV SFace (128-d Face Embedding)"]
         C4["Cosine Similarity Matcher (Threshold: 0.65)"]
         C5[("data/embeddings.npz Storage")]
     end
@@ -115,8 +115,8 @@ flowchart TD
 ## 3. Key Features
 
 ### Real-Time Biometric Face Recognition
-- **Face Detection**: Uses OpenCV Haar Cascades (`haarcascade_frontalface_default.xml`) enhanced with Contrast Limited Adaptive Histogram Equalization (CLAHE).
-- **Deep Feature Representation**: Employs a pretrained PyTorch `MobileNetV3` network generating unit-normalized 576-dimensional float32 feature embeddings.
+- **Face Detection**: OpenCV YuNet with 5-point landmarks for alignment (Haar Cascade is kept only as a fallback).
+- **Face Embedding**: OpenCV SFace (ONNX) produces unit-normalized 128-d embeddings. Matching is restricted to the session roster (course + section), uses a cosine threshold of 0.45 and rejects ambiguous near-ties.
 - **Biometric Matching**: Computes cosine similarity between query probe embeddings and stored student templates against a configurable cutoff (`RECOGNITION_THRESHOLD=0.65`).
 - **Privacy-by-Design**: **Raw photographs or facial images are never permanently saved to disk or committed to Git.** Only compressed, anonymized mathematical arrays are persisted in `data/embeddings.npz`.
 - **Edge-Case Handling**: Deterministically handles and rejects missing cameras, zero faces detected, multiple faces in a single frame, and unrecognized probe faces.
@@ -167,8 +167,10 @@ SoftwareEng_LabProject/
 ├── config.py                     # Centralized environment configuration and security guards
 ├── database.py                   # SQLite schema initialization, connection helper, and seed data
 ├── data_provider.py              # Database-backed UI data provider and catalog interface
-├── enroll_bhoomi.py              # CLI and interactive webcam face enrollment tool
-├── face_recognition_service.py   # OpenCV detection, MobileNetV3 embeddings & cosine matcher
+├── seed_demo.py                  # Builds the demo DB from seed/sample_data.json (enrols faces from photos)
+├── fetch_models.py               # Downloads the YuNet + SFace ONNX models into models_cv/
+├── seed/sample_data.json         # Teachers, courses, section assignments and students for the demo
+├── face_recognition_service.py   # YuNet detection, SFace embeddings & cosine matcher
 ├── frontend_bp.py                # Server-rendered web routes, forms, and session controllers
 ├── models.py                     # SQLite entity models (Users, Faculty, Students, Sessions, etc.)
 ├── run_frontend_dev.py           # Main Flask application entrypoint & REST API endpoints
@@ -279,68 +281,54 @@ Configure application settings by modifying `.env` in the project root:
 
 ## 8. Running the Application
 
-1. **Start the Flask development server**:
+1. **One-time setup** (downloads the face models, then builds the demo database):
+   ```powershell
+   pip install -r requirements.txt
+   python fetch_models.py
+   python seed_demo.py            # backs up any existing DB/embeddings to backups/, then rebuilds
+   ```
+2. **Start the server**:
    ```powershell
    python run_frontend_dev.py
    ```
-   *The database schema and initial academic records will automatically initialize on the first startup.*
+3. Open [http://127.0.0.1:5000](http://127.0.0.1:5000) and sign in.
 
-2. **Access the application**:
-   - Open your browser and navigate to: [http://127.0.0.1:5000](http://127.0.0.1:5000)
-   - You will be redirected to the secure login page: `http://127.0.0.1:5000/login`
+`python seed_demo.py --keep` adds missing rows without deleting anything; `--with-history` also creates past sessions
+for the *sample* students (marked `Simulated Scanner`) so the reports have data.
 
 ---
 
-## 9. Default Seeded Accounts & Courses
+## 9. Roles, Seeded Accounts & Data
 
-For evaluation and laboratory testing, the following accounts and courses are pre-seeded:
+| Role | Can do |
+| :--- | :--- |
+| **Administrator** | Register students (with section), create courses, assign a teacher to each course section, edit rosters, capture face references, view every report |
+| **Faculty** | See only the courses/sections they teach, start attendance sessions for those sections, mark manually, view reports and CSV for their own sections |
 
-### User Credentials
-| Role | Username | Password | Display Name / Affiliation |
-| :--- | :--- | :--- | :--- |
-| **Administrator** | `admin` | `admin123` | System Administrator |
-| **Faculty 1** | `rajesh.kumar` | `faculty123` | Dr. Rajesh Kumar (CSE Department, ID: `FAC001`) |
-| **Faculty 2** | `meenakshi.s` | `faculty123` | Dr. Meenakshi Sharma (CSE Department, ID: `FAC002`) |
+Students are divided **by section (A/B/C)**. A course is offered to one or more sections and each
+section has its own teacher (`course_sections` table). A session belongs to one course section; its roster is the
+students enrolled in the course who sit in that section, and face matching only considers that roster.
 
-### Core Academic Courses
-| Course Code | Course Name | Credits | Assigned Instructor |
-| :--- | :--- | :--- | :--- |
-| `CSE3132` | Software Engineering Laboratory | 2 | Dr. Rajesh Kumar (`FAC001`) |
-| `CSE3101` | Operating Systems & System Programming | 4 | Dr. Meenakshi Sharma (`FAC002`) |
-| `CSE3103` | Database Management Systems | 3 | Dr. Rajesh Kumar (`FAC001`) |
-| `CSE3105` | Computer Networks & Security | 4 | Dr. Meenakshi Sharma (`FAC002`) |
+### Logins (all data comes from `seed/sample_data.json`)
+| Role | Username | Password |
+| :--- | :--- | :--- |
+| Administrator | `admin` | `admin123` |
+| Faculty (8) | `rajesh.kumar`, `meenakshi.s`, `sanjay.verma`, `neha.gupta`, `arvind.mathur`, `pooja.agarwal`, `vikram.rathore`, `kavita.joshi` | `faculty123` |
 
-### Seeded Student Profiles
-- `STU001` — **Bhoomi Saraf** (Roll: `229301045`, B.Tech CSE Semester 5)
-- `STU002` — **Kanakpreet Kaur** (Roll: `229301088`, B.Tech CSE Semester 5)
-- `STU003` — **Apoorva Kala** (Roll: `229301112`, B.Tech CSE Semester 5)
+The seed contains 10 courses, 27 course-section assignments and 28 students. **Bhoomi Saraf (`STU001`) is the real record**: her
+face is enrolled from `data/faces/bhoomi_saraf.jpg` (git-ignored). Everyone else is sample data without a face until an
+administrator captures one. To add real people, add them to the JSON with a `photo` path and re-run `seed_demo.py`.
 
 ---
 
 ## 10. Biometric Enrollment & Camera Verification
 
-### Method A: Web UI Enrollment (Recommended)
-1. Sign in as faculty (`rajesh.kumar` / `faculty123`).
-2. Navigate to **Students** (`/students`) in the top navigation bar.
-3. Locate the target student card and click **Enroll Face**.
-4. Allow browser camera permissions. Position the student face inside the circular alignment guide.
-5. Click **Capture & Save Embeddings**. The system computes MobileNetV3 vectors and saves them to `data/embeddings.npz`.
+### Web UI (administrators)
+1. Sign in as `admin`, open **Students**.
+2. Click **Capture Face** on a student, start the webcam (or upload a photo) and capture. Exactly one face must be in frame.
+3. The embedding is stored in `data/embeddings.npz` under the student's `student_id`; the Students table then shows *Enrolled*.
 
-### Method B: Interactive Webcam Enrollment CLI
-Use the dedicated enrollment script:
-```powershell
-# Interactive webcam enrollment with 5-shot capture
-python enroll_bhoomi.py
-
-# Direct image file enrollment
-python enroll_bhoomi.py --image path/to/photo.jpg
-
-# Check current enrollment status
-python enroll_bhoomi.py --status
-```
-
-### Method C: Optical Camera Verification Tool
-Verify your camera hardware, Haar detection bounding boxes, and live recognition in real time:
+### Camera check
 ```powershell
 python verify_webcam.py
 ```
@@ -361,7 +349,7 @@ All requests that modify state require either a valid CSRF token in browser sess
 | `POST` | `/actions/courses/create` | Faculty / Admin | Form `csrf_token` | Creates course with credits, semester & faculty |
 | `POST` | `/api/sessions/<id>/recognize` | Faculty / Admin / Kiosk | `X-CSRFToken` OR `X-API-Key` | Submits camera frame for biometric matching and attendance marking |
 | `POST` | `/api/sessions/<id>/end` | Faculty / Admin | `X-CSRFToken` | Concludes active session and prevents further marking |
-| `POST` | `/api/students/<id>/register-face` | Faculty / Admin | `X-CSRFToken` | Computes & persists 576-d embeddings for a student |
+| `POST` | `/api/students/<id>/register-face` | Admin | `X-CSRFToken` | Computes & persists the face embedding for a student |
 | `POST` | `/api/courses/<id>/enroll` | Faculty / Admin | `X-CSRFToken` | Enrolls student IDs into the course roster |
 | `GET` | `/api/courses/<id>/enrollment-data` | Authenticated | None | Retrieves course enrollment roster and status |
 | `GET` | `/api/reports/data` | Faculty / Admin | None | Returns JSON attendance analytics for a course |
@@ -378,7 +366,7 @@ The test suite covers backend logic, security controls, live API contracts, face
 python -m pytest -v
 ```
 
-### Test Suite Structure (72 Passing Tests)
+### Test Suite Structure (91 Passing Tests)
 
 ```text
 test_backend.py .................................................... 8 passed
@@ -414,13 +402,27 @@ tests/test_security.py ............................................ 21 passed
   - test_faculty_cannot_modify_another_instructors_session
   - (and 11 additional security boundary tests)
 
-tests/test_frontend.py ............................................ 12 passed
-  - test_login_page_renders
+tests/test_frontend.py ............................................ 21 passed
   - test_unauthenticated_redirect
-  - test_dashboard_access_for_faculty
-  - test_session_creation_action
-  - test_course_creation_form
-  - (and 7 additional UI and routing tests)
+  - test_login_page_has_no_prefilled_credentials
+  - test_login_with_seeded_faculty
+  - test_mvp_badge_removed_from_every_page
+  - test_admin_sees_admin_controls
+  - test_faculty_has_no_admin_controls
+  - test_faculty_only_sees_own_courses_and_students
+  - test_admin_creates_course_with_sections_and_enrols_them
+  - test_faculty_cannot_create_course_or_student
+  - test_admin_roster_and_face_apis_are_admin_only
+  - test_session_roster_is_the_chosen_section_only
+  - test_manual_mark_rejects_other_section_and_duplicates
+  - test_report_percentages_are_per_section
+  - (and 8 additional presentation and role tests)
+
+tests/test_sections_and_roles.py ................................... 4 passed
+  - test_section_schema_migration_and_defaults
+  - test_attendance_rejected_when_student_in_wrong_section
+  - test_non_admin_cannot_create_course
+  - test_non_admin_cannot_register_student
 
 tests/test_face_recognition.py .................................... 15 passed
   - test_cascade_initialization
@@ -430,6 +432,12 @@ tests/test_face_recognition.py .................................... 15 passed
   - test_multiple_face_detection_handling
   - test_embeddings_npz_persistence_and_reload
   - (and 9 additional vision pipeline unit tests)
+
+tests/test_face_sface.py ........................................... 6 passed
+  - test_sface_feature_dimension
+  - test_sface_cosine_similarity
+  - test_sface_embedding_normalization
+  - (and 3 additional SFace pipeline unit tests)
 
 tests/test_e2e_integration.py ...................................... 8 passed
   - test_1_student_creation_and_persistence

@@ -44,13 +44,14 @@ def get_db_cursor(db_path=None, commit=True):
 
 def init_db(db_path=None):
     """
-    Creates all required tables for the Smart Attendance System MVP.
+    Creates all required tables for the Smart Attendance System.
     Schema matches UML Class Diagram & System SRS requirements:
     - users (Auth & Roles)
     - faculty (Faculty members)
     - students (Registered students)
     - courses (Course catalog)
     - enrollments (Course-Student mapping)
+    - course_sections (which teacher teaches which section of a course)
     - class_sessions (Course attendance sessions)
     - attendance_records (Actual attendance records with duplicate prevention)
     """
@@ -79,6 +80,7 @@ def init_db(db_path=None):
         email TEXT UNIQUE NOT NULL,
         program TEXT NOT NULL,
         semester INTEGER NOT NULL,
+        section TEXT DEFAULT 'A',
         face_registered INTEGER DEFAULT 0 CHECK(face_registered IN (0, 1)),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
@@ -104,6 +106,15 @@ def init_db(db_path=None):
         UNIQUE(course_id, student_id)
     );
 
+    CREATE TABLE IF NOT EXISTS course_sections (
+        course_id TEXT NOT NULL,
+        section TEXT NOT NULL,
+        faculty_id TEXT NOT NULL,
+        PRIMARY KEY (course_id, section),
+        FOREIGN KEY (course_id) REFERENCES courses(course_id) ON DELETE CASCADE,
+        FOREIGN KEY (faculty_id) REFERENCES faculty(faculty_id) ON DELETE RESTRICT
+    );
+
     CREATE TABLE IF NOT EXISTS class_sessions (
         session_id TEXT PRIMARY KEY,
         course_id TEXT NOT NULL,
@@ -114,6 +125,7 @@ def init_db(db_path=None):
         status TEXT NOT NULL DEFAULT 'Active' CHECK(status IN ('Active', 'Completed', 'Cancelled')),
         room TEXT DEFAULT 'Lab 204, Academic Block 3',
         topic TEXT,
+        section TEXT DEFAULT 'All',
         FOREIGN KEY (course_id) REFERENCES courses(course_id) ON DELETE RESTRICT,
         FOREIGN KEY (faculty_id) REFERENCES faculty(faculty_id) ON DELETE RESTRICT
     );
@@ -138,10 +150,22 @@ def init_db(db_path=None):
     CREATE INDEX IF NOT EXISTS idx_attendance_student ON attendance_records(student_id);
     CREATE INDEX IF NOT EXISTS idx_attendance_course ON attendance_records(course_id);
     CREATE INDEX IF NOT EXISTS idx_sessions_course ON class_sessions(course_id);
+    CREATE INDEX IF NOT EXISTS idx_course_sections_faculty ON course_sections(faculty_id);
     """
 
     with get_db_cursor(db_path) as cursor:
         cursor.executescript(schema_sql)
+
+        # Dynamic schema migration: ensure section columns exist
+        cursor.execute("PRAGMA table_info(students);")
+        student_cols = [row['name'] for row in cursor.fetchall()]
+        if 'section' not in student_cols:
+            cursor.execute("ALTER TABLE students ADD COLUMN section TEXT DEFAULT 'A';")
+
+        cursor.execute("PRAGMA table_info(class_sessions);")
+        session_cols = [row['name'] for row in cursor.fetchall()]
+        if 'section' not in session_cols:
+            cursor.execute("ALTER TABLE class_sessions ADD COLUMN section TEXT DEFAULT 'All';")
 
 
 def seed_initial_data(db_path=None):
@@ -205,17 +229,17 @@ def seed_initial_data(db_path=None):
 
         # 4. Students
         students = [
-            ('STU001', '229301045', 'Bhoomi Saraf', 'bhoomi.229301045@muj.manipal.edu', 'B.Tech CSE', 5, 1),
-            ('STU002', '229301088', 'Kanakpreet Kaur', 'kanakpreet.229301088@muj.manipal.edu', 'B.Tech CSE', 5, 1),
-            ('STU003', '229301112', 'Apoorva Kala', 'apoorva.229301112@muj.manipal.edu', 'B.Tech CSE', 5, 1),
-            ('STU004', '229301150', 'Aarav Sharma', 'aarav.229301150@muj.manipal.edu', 'B.Tech CSE', 5, 1),
-            ('STU005', '229301198', 'Rohan Mehta', 'rohan.229301198@muj.manipal.edu', 'B.Tech CSE', 5, 1),
-            ('STU006', '229301224', 'Priya Patel', 'priya.229301224@muj.manipal.edu', 'B.Tech CSE', 5, 1),
-            ('STU007', '229301275', 'Kabir Verma', 'kabir.229301275@muj.manipal.edu', 'B.Tech CSE', 5, 0),
-            ('STU008', '229301310', 'Ananya Deshmukh', 'ananya.229301310@muj.manipal.edu', 'B.Tech CSE', 5, 1),
+            ('STU001', '229301045', 'Bhoomi Saraf', 'bhoomi.229301045@muj.manipal.edu', 'B.Tech CSE', 5, 1, 'A'),
+            ('STU002', '229301088', 'Kanakpreet Kaur', 'kanakpreet.229301088@muj.manipal.edu', 'B.Tech CSE', 5, 1, 'B'),
+            ('STU003', '229301112', 'Apoorva Kala', 'apoorva.229301112@muj.manipal.edu', 'B.Tech CSE', 5, 1, 'B'),
+            ('STU004', '229301150', 'Aarav Sharma', 'aarav.229301150@muj.manipal.edu', 'B.Tech CSE', 5, 1, 'A'),
+            ('STU005', '229301198', 'Rohan Mehta', 'rohan.229301198@muj.manipal.edu', 'B.Tech CSE', 5, 1, 'B'),
+            ('STU006', '229301224', 'Priya Patel', 'priya.229301224@muj.manipal.edu', 'B.Tech CSE', 5, 1, 'C'),
+            ('STU007', '229301275', 'Kabir Verma', 'kabir.229301275@muj.manipal.edu', 'B.Tech CSE', 5, 0, 'C'),
+            ('STU008', '229301310', 'Ananya Deshmukh', 'ananya.229301310@muj.manipal.edu', 'B.Tech CSE', 5, 1, 'C'),
         ]
         cursor.executemany(
-            "INSERT INTO students (student_id, roll_number, name, email, program, semester, face_registered) VALUES (?, ?, ?, ?, ?, ?, ?);",
+            "INSERT INTO students (student_id, roll_number, name, email, program, semester, face_registered, section) VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
             students
         )
 

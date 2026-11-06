@@ -1,215 +1,218 @@
 """
-data_provider.py - SQLite-backed Data Provider for Smart Attendance System
-Integrates the presentation tier directly with SQLite (smart_attendance.db)
-and manages students, courses, enrollments, and live attendance sessions.
+data_provider.py - SQLite-backed Data Provider for Smart Attendance System.
+Feeds the presentation tier from smart_attendance.db and the face-embedding registry.
+
+Conventions
+-----------
+* Every student/course payload carries ``id`` equal to its canonical string key
+  (``student_id`` / ``course_id``). There are no positional or numeric aliases.
+* ``faculty_id`` arguments scope results to what that teacher is allowed to see
+  (the courses and sections they are assigned to). ``None`` means unscoped (admin).
 """
 
 import os
-import sqlite3
-import datetime
 from typing import List, Dict, Any, Optional
 import database
 from config import Config
 from face_recognition_service import face_service
+from models import CourseSectionModel, EnrollmentModel
 
 DB_PATH = database.DEFAULT_DB_PATH
 EMBEDDINGS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
 os.makedirs(EMBEDDINGS_DIR, exist_ok=True)
 EMBEDDINGS_FILE = os.path.join(EMBEDDINGS_DIR, 'embeddings.npz')
 
+LOW_ATTENDANCE_THRESHOLD = 75.0
+
+
+def _pct(present: int, total: int) -> int:
+    return int(round(present / total * 100)) if total else 0
+
 
 class DataProvider:
     def __init__(self, db_path: Optional[str] = None, embeddings_path: Optional[str] = None):
         self.db_path = db_path or DB_PATH
         self.embeddings_path = embeddings_path or getattr(Config, 'EMBEDDINGS_FILE', EMBEDDINGS_FILE)
-        self._init_database()
+        database.init_db(self.db_path)
         self._load_face_embeddings()
 
-    def _init_database(self):
-        """Ensure SQLite schema is initialized without seeding fake runtime records."""
-        database.init_db(self.db_path)
-
     def _load_face_embeddings(self):
-        """Auto-load any persisted embeddings from configured storage into face_service."""
-        target_path = self.embeddings_path or getattr(Config, 'EMBEDDINGS_FILE', EMBEDDINGS_FILE)
-        if target_path and os.path.exists(target_path):
-            face_service.load_embeddings(target_path)
+        """Auto-load persisted embeddings from configured storage into face_service."""
+        if self.embeddings_path and os.path.exists(self.embeddings_path):
+            face_service.load_embeddings(self.embeddings_path)
+
+    def _conn(self):
+        return database.get_db_connection(self.db_path)
+
+    # -------------------------------------------------------------------------
+    # Teaching scope
+    # -------------------------------------------------------------------------
+
+    def get_teaching_assignments(self, faculty_id: str) -> List[Dict[str, Any]]:
+        """Every (course, section) the faculty member teaches, for the session launcher."""
+        return [
+            {
+                'course_id': r['course_id'],
+                'course_code': r['course_code'],
+                'course_name': r['course_name'],
+                'section': r['section'],
+                'student_count': r['student_count'],
+            }
+            for r in CourseSectionModel.for_faculty(faculty_id, self.db_path)
+        ]
+
+    def get_all_faculty(self) -> List[Dict[str, Any]]:
+        conn = self._conn()
+        rows = conn.execute("SELECT faculty_id, name, email, department FROM faculty ORDER BY name;").fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    def get_sections(self) -> List[str]:
+        """Sections that exist in the student directory (drives every section dropdown)."""
+        conn = self._conn()
+        rows = conn.execute(
+            "SELECT DISTINCT UPPER(section) AS section FROM students WHERE section IS NOT NULL AND section != '' ORDER BY 1;"
+        ).fetchall()
+        conn.close()
+        return [r['section'] for r in rows]
 
     # -------------------------------------------------------------------------
     # Student Operations
     # -------------------------------------------------------------------------
 
-    def get_all_students(self) -> List[Dict[str, Any]]:
-        """Return all students from SQLite database with current biometric status."""
-        conn = database.get_db_connection(self.db_path)
-        cursor = conn.cursor()
+    def get_all_students(self, faculty_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Students with face-enrolment status; scoped to a teacher's sections when faculty_id is given."""
+        conn = self._conn()
+        if faculty_id:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT s.* FROM students s
+                JOIN enrollments e ON e.student_id = s.student_id
+                JOIN course_sections cs ON cs.course_id = e.course_id AND cs.section = UPPER(s.section)
+                WHERE cs.faculty_id = ?
+                ORDER BY s.roll_number;
+                """,
+                (faculty_id,)
+            ).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM students ORDER BY section, roll_number;").fetchall()
 
-        cursor.execute("SELECT * FROM students ORDER BY student_id ASC;")
-        rows = cursor.fetchall()
-
-        # Query enrollments
-        cursor.execute("""
-            SELECT e.student_id, c.course_code 
-            FROM enrollments e 
-            JOIN courses c ON e.course_id = c.course_id OR e.course_id = c.course_code;
-        """)
-        enrollment_rows = cursor.fetchall()
-        course_map = {}
-        for er in enrollment_rows:
-            sid = er['student_id']
-            code = er['course_code']
-            if sid not in course_map:
-                course_map[sid] = []
-            if code not in course_map[sid]:
-                course_map[sid].append(code)
-
+        course_map: Dict[str, List[str]] = {}
+        for er in conn.execute(
+            "SELECT e.student_id, c.course_code FROM enrollments e JOIN courses c ON e.course_id = c.course_id ORDER BY c.course_code;"
+        ).fetchall():
+            course_map.setdefault(er['student_id'], []).append(er['course_code'])
         conn.close()
-
-        registered_face_ids = set(face_service.get_registered_student_ids())
 
         results = []
-        for i, row in enumerate(rows, start=1):
-            sid_str = row['student_id']
-            roll = row['roll_number']
-            name = row['name']
-
-            numeric_id = i
-            if sid_str.startswith('STU') and sid_str[3:].isdigit():
-                numeric_id = int(sid_str[3:])
-
-            has_face_in_service = (
-                str(numeric_id) in registered_face_ids or
-                sid_str in registered_face_ids or
-                roll in registered_face_ids
-            )
-
-            has_face = bool(row['face_registered'] or has_face_in_service)
-            sample_count = len(face_service._registered_embeddings.get(str(numeric_id), []))
-            if sample_count == 0:
-                sample_count = len(face_service._registered_embeddings.get(roll, []))
-            if sample_count == 0 and has_face:
-                sample_count = 1
-
-            courses = course_map.get(sid_str, [])
-
+        for row in rows:
+            samples = face_service.get_sample_count(row['student_id'])
             results.append({
-                'id': numeric_id,
-                'student_id': sid_str,
-                'roll_no': roll,
-                'name': name,
+                'id': row['student_id'],
+                'student_id': row['student_id'],
+                'roll_no': row['roll_number'],
+                'name': row['name'],
                 'email': row['email'],
-                'has_face': has_face,
-                'face_samples_count': sample_count,
-                'course_codes': courses
+                'section': (row['section'] or 'A').upper(),
+                'has_face': samples > 0,
+                'face_samples_count': samples,
+                'course_codes': course_map.get(row['student_id'], []),
             })
-
         return results
 
-    def create_student(self, roll_no: str, name: str, email: str, program: str = "B.Tech CSE", semester: int = 5) -> Dict[str, Any]:
-        """Insert a newly registered student into SQLite database."""
-        roll_no = roll_no.strip()
-        name = name.strip()
-        email = email.strip()
+    def create_student(self, roll_no: str, name: str, email: str, program: str = "B.Tech CSE",
+                       semester: int = 5, section: str = "A") -> Dict[str, Any]:
+        """
+        Register a student. They are enrolled automatically in every course that is taught to
+        their section, so a new student appears on the right rosters straight away.
+        """
+        roll_no, name, email = roll_no.strip(), name.strip(), email.strip()
+        section = (section or "A").strip().upper()
 
-        conn = database.get_db_connection(self.db_path)
-        cursor = conn.cursor()
-
-        # Check if student already exists by roll_number or email
-        cursor.execute("SELECT * FROM students WHERE roll_number = ? OR email = ?;", (roll_no, email))
-        existing = cursor.fetchone()
+        conn = self._conn()
+        existing = conn.execute(
+            "SELECT student_id FROM students WHERE roll_number = ? OR email = ?;", (roll_no, email)
+        ).fetchone()
         if existing:
             conn.close()
-            return self.get_student_by_roll(roll_no)
+            return self.get_student_by_id(existing['student_id'])
 
-        # Generate next unique ID
-        cursor.execute("SELECT student_id FROM students WHERE student_id LIKE 'STU%';")
-        existing_ids = [r['student_id'] for r in cursor.fetchall()]
         max_num = 0
-        for eid in existing_ids:
-            num_part = eid[3:]
-            if num_part.isdigit() and int(num_part) > max_num:
-                max_num = int(num_part)
-        next_num = max_num + 1
-        new_sid = f"STU{next_num:03d}"
+        for r in conn.execute("SELECT student_id FROM students WHERE student_id LIKE 'STU%';").fetchall():
+            tail = r['student_id'][3:]
+            if tail.isdigit():
+                max_num = max(max_num, int(tail))
+        new_sid = f"STU{max_num + 1:03d}"
 
-        # Insert student
-        cursor.execute(
+        conn.execute(
             """
-            INSERT INTO students (student_id, roll_number, name, email, program, semester, face_registered)
-            VALUES (?, ?, ?, ?, ?, ?, 0);
+            INSERT INTO students (student_id, roll_number, name, email, program, semester, face_registered, section)
+            VALUES (?, ?, ?, ?, ?, ?, 0, ?);
             """,
-            (new_sid, roll_no, name, email, program, semester)
+            (new_sid, roll_no, name, email, program, semester, section)
         )
-
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO enrollments (course_id, student_id)
+            SELECT course_id, ? FROM course_sections WHERE section = ?;
+            """,
+            (new_sid, section)
+        )
         conn.commit()
         conn.close()
+        return self.get_student_by_id(new_sid)
 
-        return {
-            'id': next_num,
-            'student_id': new_sid,
-            'roll_no': roll_no,
-            'name': name,
-            'email': email,
-            'has_face': False,
-            'face_samples_count': 0,
-            'course_codes': []
-        }
-
-    def get_student_by_id(self, student_id: int) -> Optional[Dict[str, Any]]:
-        """Look up student by integer ID or string key."""
-        all_students = self.get_all_students()
-        return next((s for s in all_students if s['id'] == student_id or s['student_id'] == f"STU{student_id:03d}"), None)
+    def get_student_by_id(self, student_id: Any) -> Optional[Dict[str, Any]]:
+        """Look up a student by canonical student_id (or roll number)."""
+        key = str(student_id).strip().lower()
+        return next(
+            (s for s in self.get_all_students() if s['student_id'].lower() == key or s['roll_no'].lower() == key),
+            None
+        )
 
     def get_student_by_roll(self, roll_no: str) -> Optional[Dict[str, Any]]:
-        """Look up student by roll number."""
-        all_students = self.get_all_students()
-        return next((s for s in all_students if s['roll_no'].lower() == roll_no.lower()), None)
+        return self.get_student_by_id(roll_no)
 
-    def set_student_face_registered(self, student_id_or_roll: str, face_registered: bool = True):
-        """Mark face biometrics as registered in SQLite."""
-        conn = database.get_db_connection(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            UPDATE students 
-            SET face_registered = ? 
-            WHERE student_id = ? OR roll_number = ? OR student_id = ?;
-            """,
-            (
-                1 if face_registered else 0,
-                str(student_id_or_roll),
-                str(student_id_or_roll),
-                f"STU{int(student_id_or_roll):03d}" if str(student_id_or_roll).isdigit() else str(student_id_or_roll)
-            )
+    def set_student_face_registered(self, student_id: str, face_registered: bool = True):
+        conn = self._conn()
+        conn.execute(
+            "UPDATE students SET face_registered = ? WHERE student_id = ? OR roll_number = ?;",
+            (1 if face_registered else 0, str(student_id), str(student_id))
         )
         conn.commit()
         conn.close()
 
     # -------------------------------------------------------------------------
-    # Course & Session Operations
+    # Course Operations
     # -------------------------------------------------------------------------
 
-    def get_all_courses(self) -> List[Dict[str, Any]]:
-        """Return course catalog queried live from SQLite."""
-        conn = database.get_db_connection(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute(
+    def get_all_courses(self, faculty_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Course catalogue with per-section teachers; scoped to a teacher's own courses when given."""
+        conn = self._conn()
+        rows = conn.execute(
             """
             SELECT c.*, f.name AS faculty_name,
                    (SELECT COUNT(*) FROM enrollments e WHERE e.course_id = c.course_id) AS enrolled_count,
                    (SELECT COUNT(*) FROM class_sessions s WHERE s.course_id = c.course_id) AS sessions_count
-            FROM courses c
-            LEFT JOIN faculty f ON c.faculty_id = f.faculty_id
+            FROM courses c LEFT JOIN faculty f ON c.faculty_id = f.faculty_id
             ORDER BY c.course_code ASC;
             """
-        )
-        rows = cursor.fetchall()
+        ).fetchall()
         conn.close()
 
         results = []
-        for i, r in enumerate(rows, start=1):
+        for r in rows:
+            sections = CourseSectionModel.for_course(r['course_id'], self.db_path)
+            if faculty_id:
+                mine = [s for s in sections if s['faculty_id'] == faculty_id]
+                if not mine and r['faculty_id'] != faculty_id:
+                    continue
+                if not sections:  # legacy course without section assignments
+                    mine = []
+            else:
+                mine = sections
             results.append({
-                'id': i,
+                'id': r['course_id'],
                 'course_id': r['course_id'],
                 'code': r['course_code'],
                 'name': r['course_name'],
@@ -220,7 +223,9 @@ class DataProvider:
                 'academic_year': r['academic_year'],
                 'enrolled_count': r['enrolled_count'],
                 'sessions_count': r['sessions_count'],
-                'description': f"Credits: {r['credits']} | Semester {r['semester']} ({r['academic_year']})"
+                'sections': sections,
+                'my_sections': mine,
+                'description': f"{r['credits']} credits | Semester {r['semester']} | {r['academic_year']}",
             })
         return results
 
@@ -232,267 +237,250 @@ class DataProvider:
         faculty_id: Optional[str] = None,
         credits: Optional[int] = None,
         semester: Optional[int] = None,
-        academic_year: Optional[str] = None
+        academic_year: Optional[str] = None,
+        sections: Optional[List[str]] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Insert a newly created course into SQLite database with verified faculty assignment and validated attributes."""
+        """
+        Create a course led by ``faculty_id``. For every section in ``sections`` the lead
+        faculty is assigned as teacher and that section's students are enrolled; the admin can
+        then reassign individual sections to other teachers.
+        """
         code = code.strip().upper()
         name = name.strip()
-        conn = database.get_db_connection(self.db_path)
-        cursor = conn.cursor()
-
         if not faculty_id:
-            conn.close()
             raise ValueError("Faculty assignment is required to create a course.")
 
-        cursor.execute("SELECT faculty_id FROM faculty WHERE faculty_id = ?;", (faculty_id,))
-        fac_row = cursor.fetchone()
+        conn = self._conn()
+        fac_row = conn.execute("SELECT faculty_id FROM faculty WHERE faculty_id = ?;", (faculty_id,)).fetchone()
         if not fac_row:
             conn.close()
             raise ValueError(f"Faculty '{faculty_id}' does not exist.")
-        assigned_faculty_id = fac_row['faculty_id']
 
-        # Validate credits
         course_credits = int(credits) if credits is not None else getattr(Config, 'DEFAULT_COURSE_CREDITS', 3)
         if course_credits <= 0:
             conn.close()
             raise ValueError(f"Invalid course credits: {course_credits}. Must be a positive integer.")
 
-        # Validate semester
         course_semester = int(semester) if semester is not None else getattr(Config, 'DEFAULT_COURSE_SEMESTER', 5)
         if not (1 <= course_semester <= 12):
             conn.close()
             raise ValueError(f"Invalid semester: {course_semester}. Must be between 1 and 12.")
 
-        # Academic year
-        course_academic_year = str(academic_year).strip() if academic_year else getattr(Config, 'DEFAULT_ACADEMIC_YEAR', '2026-2027')
-
+        course_year = str(academic_year).strip() if academic_year else getattr(Config, 'DEFAULT_ACADEMIC_YEAR', '2026-2027')
         course_id = f"CRS-{code}"
         try:
-            cursor.execute(
+            conn.execute(
                 """
                 INSERT INTO courses (course_id, course_code, course_name, credits, faculty_id, semester, academic_year)
                 VALUES (?, ?, ?, ?, ?, ?, ?);
                 """,
-                (course_id, code, name, course_credits, assigned_faculty_id, course_semester, course_academic_year)
+                (course_id, code, name, course_credits, faculty_id, course_semester, course_year)
             )
             conn.commit()
-            conn.close()
-            courses = self.get_all_courses()
-            return next((c for c in courses if c['code'] == code), None)
         except Exception:
             conn.close()
             return None
-
-    def start_session(self, course_id: Any, topic: str = "Regular Lecture", faculty_id: Optional[str] = None) -> str:
-        """Start a new active attendance session in SQLite via AttendanceService."""
-        conn = database.get_db_connection(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM courses WHERE course_id = ? OR course_code = ?;", (str(course_id), str(course_id)))
-        course = cursor.fetchone()
-        if not course:
-            courses = self.get_all_courses()
-            if str(course_id).isdigit():
-                idx = int(course_id)
-                if 1 <= idx <= len(courses):
-                    c_entry = courses[idx - 1]
-                    cursor.execute("SELECT * FROM courses WHERE course_id = ?;", (c_entry['course_id'],))
-                    course = cursor.fetchone()
-
         conn.close()
 
+        for sec in (sections or []):
+            self.assign_section(course_id, sec, faculty_id, enroll_students=True)
+        return next((c for c in self.get_all_courses() if c['course_id'] == course_id), None)
+
+    def assign_section(self, course_id: str, section: str, faculty_id: str, enroll_students: bool = True) -> None:
+        """Make ``faculty_id`` the teacher of one section of a course (optionally enrolling the section)."""
+        section = section.strip().upper()
+        CourseSectionModel.assign(course_id, section, faculty_id, self.db_path)
+        if enroll_students:
+            EnrollmentModel.enroll_section(course_id, section, self.db_path)
+
+    def remove_section(self, course_id: str, section: str, unenroll_students: bool = False) -> None:
+        CourseSectionModel.unassign(course_id, section, self.db_path)
+        if unenroll_students:
+            EnrollmentModel.unenroll_section(course_id, section, self.db_path)
+
+    # -------------------------------------------------------------------------
+    # Sessions
+    # -------------------------------------------------------------------------
+
+    def start_session(self, course_id: Any, topic: str = "Regular Lecture",
+                      faculty_id: Optional[str] = None, section: str = "All") -> str:
+        """Start an attendance session for one section of a course."""
+        conn = self._conn()
+        course = conn.execute(
+            "SELECT course_id FROM courses WHERE course_id = ? OR course_code = ?;", (str(course_id), str(course_id))
+        ).fetchone()
+        conn.close()
         if not course:
             raise ValueError(f"Course '{course_id}' does not exist.")
-
         if not faculty_id:
             raise ValueError("Faculty assignment is required to start an attendance session.")
 
-        actual_course_id = course['course_id']
-
         from attendance_service import AttendanceService
         success, msg, session = AttendanceService.start_session(
-            course_id=actual_course_id,
+            course_id=course['course_id'],
             faculty_id=faculty_id,
             topic=topic or "Regular Lecture",
+            section=section or "All",
             db_path=self.db_path
         )
         if success and session:
             return session['session_id']
         raise RuntimeError(msg)
 
-    def get_dashboard_data(self) -> Dict[str, Any]:
-        """Calculate real dashboard metrics from SQLite database."""
-        conn = database.get_db_connection(self.db_path)
-        cursor = conn.cursor()
-
-        cursor.execute("SELECT COUNT(*) AS count FROM class_sessions WHERE status = 'Active';")
-        active_sessions_count = cursor.fetchone()['count']
-
-        cursor.execute("SELECT COUNT(*) AS count FROM students;")
-        total_students_count = cursor.fetchone()['count']
-
-        cursor.execute("SELECT COUNT(*) AS count FROM courses;")
-        total_courses_count = cursor.fetchone()['count']
-
-        # Calculate average attendance rate across all sessions
-        cursor.execute(
-            """
-            SELECT s.session_id, s.course_id,
-                   (SELECT COUNT(*) FROM attendance_records a WHERE a.session_id = s.session_id AND a.status = 'Present') AS present_count,
-                   (SELECT COUNT(*) FROM enrollments e WHERE e.course_id = s.course_id) AS enrolled_count
-            FROM class_sessions s;
-            """
-        )
-        session_rows = cursor.fetchall()
-        total_present = sum(r['present_count'] for r in session_rows)
-        total_expected = sum(r['enrolled_count'] for r in session_rows)
-
-        if total_expected > 0:
-            avg_attendance = f"{round((total_present / total_expected) * 100, 1)}%"
-        else:
-            avg_attendance = "0.0%"
-
-        # Query recent sessions
-        cursor.execute(
-            """
-            SELECT s.session_id, s.course_id, s.date, s.start_time, s.status,
+    def _session_rows(self, faculty_id: Optional[str], limit: Optional[int] = None, course_id: Optional[str] = None):
+        sql = """
+            SELECT s.session_id, s.course_id, s.date, s.start_time, s.end_time, s.status,
+                   COALESCE(UPPER(s.section), 'ALL') AS section, s.topic,
                    c.course_code, c.course_name,
-                   (SELECT COUNT(*) FROM attendance_records a WHERE a.session_id = s.session_id AND a.status = 'Present') AS present_count,
-                   (SELECT COUNT(*) FROM enrollments e WHERE e.course_id = s.course_id) AS total_enrolled
-            FROM class_sessions s
-            LEFT JOIN courses c ON s.course_id = c.course_id
-            ORDER BY s.date DESC, s.start_time DESC
-            LIMIT 10;
+                   (SELECT COUNT(*) FROM attendance_records a WHERE a.session_id = s.session_id AND a.status IN ('Present','Late')) AS present_count,
+                   (SELECT COUNT(*) FROM enrollments e JOIN students st ON st.student_id = e.student_id
+                     WHERE e.course_id = s.course_id
+                       AND (COALESCE(UPPER(s.section), 'ALL') = 'ALL' OR UPPER(st.section) = UPPER(s.section))) AS total_enrolled
+            FROM class_sessions s LEFT JOIN courses c ON s.course_id = c.course_id
+            WHERE 1 = 1
             """
-        )
-        recent_rows = cursor.fetchall()
+        params: list = []
+        if faculty_id:
+            sql += " AND s.faculty_id = ?"
+            params.append(faculty_id)
+        if course_id:
+            sql += " AND s.course_id = ?"
+            params.append(course_id)
+        sql += " ORDER BY s.date DESC, s.start_time DESC"
+        if limit:
+            sql += f" LIMIT {int(limit)}"
+        conn = self._conn()
+        rows = conn.execute(sql, params).fetchall()
         conn.close()
+        return rows
 
-        recent_sessions = []
-        for r in recent_rows:
-            enrolled = r['total_enrolled'] or 0
-            present = r['present_count'] or 0
-            pct = int(round((present / max(1, enrolled)) * 100)) if enrolled > 0 else 0
-            recent_sessions.append({
-                'id': r['session_id'],
-                'course_code': r['course_code'] or r['course_id'],
-                'course_name': r['course_name'] or 'Curriculum Session',
-                'date': r['date'],
-                'start_time': r['start_time'],
-                'status': r['status'].upper(),
-                'present_count': present,
-                'total_enrolled': enrolled,
-                'attendance_percentage': pct
-            })
-
-        courses = self.get_all_courses()
-
-        stats = {
-            'active_sessions': active_sessions_count,
-            'total_students': total_students_count,
-            'total_courses': total_courses_count,
-            'avg_attendance': avg_attendance
+    @staticmethod
+    def _session_payload(r) -> Dict[str, Any]:
+        enrolled, present = r['total_enrolled'] or 0, r['present_count'] or 0
+        return {
+            'id': r['session_id'],
+            'course_id': r['course_id'],
+            'course_code': r['course_code'] or r['course_id'],
+            'course_name': r['course_name'] or 'Session',
+            'date': r['date'],
+            'start_time': r['start_time'],
+            'end_time': r['end_time'],
+            'section': r['section'].title() if r['section'] == 'ALL' else r['section'],
+            'topic': r['topic'],
+            'status': r['status'].upper(),
+            'present_count': present,
+            'total_enrolled': enrolled,
+            'attendance_percentage': _pct(present, enrolled),
         }
 
+    def get_dashboard_data(self, faculty_id: Optional[str] = None) -> Dict[str, Any]:
+        """Dashboard metrics, scoped to one teacher (faculty_id) or institution-wide (None)."""
+        sessions = [self._session_payload(r) for r in self._session_rows(faculty_id)]
+        courses = self.get_all_courses(faculty_id)
+        students = self.get_all_students(faculty_id)
+
+        total_present = sum(s['present_count'] for s in sessions)
+        total_expected = sum(s['total_enrolled'] for s in sessions)
+        avg = f"{round(total_present / total_expected * 100, 1)}%" if total_expected else "N/A"
+
         return {
-            'stats': stats,
-            'recent_sessions': recent_sessions,
-            'courses': courses
+            'stats': {
+                'active_sessions': sum(1 for s in sessions if s['status'] == 'ACTIVE'),
+                'total_students': len(students),
+                'faces_enrolled': sum(1 for s in students if s['has_face']),
+                'total_courses': len(courses),
+                'avg_attendance': avg,
+            },
+            'recent_sessions': sessions[:10],
+            'courses': courses,
         }
 
     def get_session_details(self, session_id: Any) -> Optional[Dict[str, Any]]:
-        """Return session details including dynamic enrolled and present counts from SQLite."""
         from models import ClassSessionModel
         session = ClassSessionModel.get_by_id(str(session_id), self.db_path)
         if not session:
             return None
-
         enrolled = self.get_enrolled_students_for_session(session_id)
-        records = self.get_attendance_records(session_id)
-        present_count = len(records)
-        total_enrolled = max(1, len(enrolled))
-        percentage = int(round((present_count / total_enrolled) * 100)) if total_enrolled > 0 else 0
-
+        present = len(self.get_attendance_records(session_id))
         return {
             'id': session['session_id'],
             'course_id': session['course_id'],
             'faculty_id': session.get('faculty_id'),
             'course_code': session.get('course_code') or session['course_id'],
             'course_name': session.get('course_name') or 'Attendance Session',
-            'faculty_name': session.get('faculty_name') or 'Dr. Alan Turing',
-            'start_time': session.get('start_time') or '09:00:00 AM',
+            'faculty_name': session.get('faculty_name') or '',
+            'date': session.get('date'),
+            'start_time': session.get('start_time'),
             'status': session['status'].upper(),
+            'section': session.get('section') or 'All',
             'total_enrolled': len(enrolled),
-            'present_count': present_count,
-            'attendance_percentage': percentage
+            'present_count': present,
+            'attendance_percentage': _pct(present, len(enrolled)),
         }
 
     def get_enrolled_students_for_session(self, session_id: Any) -> List[Dict[str, Any]]:
-        """Return all students enrolled in the active course session from SQLite."""
-        conn = database.get_db_connection(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            SELECT s.*, e.enrolled_at
-            FROM class_sessions cs
-            JOIN enrollments e ON cs.course_id = e.course_id
-            JOIN students s ON e.student_id = s.student_id
-            WHERE cs.session_id = ?
-            ORDER BY s.roll_number ASC;
-            """,
-            (str(session_id),)
-        )
-        rows = cursor.fetchall()
-        conn.close()
-
-        results = []
-        for i, r in enumerate(rows, start=1):
-            sid_str = r['student_id']
-            num_id = int(sid_str[3:]) if sid_str.startswith('STU') and sid_str[3:].isdigit() else i
-            results.append({
-                'id': num_id,
-                'student_id': sid_str,
+        """The session roster: students enrolled in the course AND belonging to the session's section."""
+        from models import ClassSessionModel
+        session = ClassSessionModel.get_by_id(str(session_id), self.db_path)
+        if not session:
+            return []
+        rows = EnrollmentModel.get_enrolled_students(session['course_id'], self.db_path, section=session.get('section'))
+        return [
+            {
+                'id': r['student_id'],
+                'student_id': r['student_id'],
                 'roll_no': r['roll_number'],
                 'name': r['name'],
-                'email': r['email']
-            })
-        return results
+                'email': r['email'],
+                'section': (r['section'] or 'A').upper(),
+            }
+            for r in rows
+        ]
 
     def get_attendance_records(self, session_id: Any) -> List[Dict[str, Any]]:
-        """Return current attendance records for session directly from SQLite."""
-        conn = database.get_db_connection(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute(
+        conn = self._conn()
+        rows = conn.execute(
             """
-            SELECT a.*, s.name as student_name, s.roll_number as roll_no
-            FROM attendance_records a
-            JOIN students s ON a.student_id = s.student_id OR a.student_id = s.roll_number
-            WHERE a.session_id = ?
-            ORDER BY a.timestamp ASC;
+            SELECT a.*, s.name AS student_name, s.roll_number AS roll_no
+            FROM attendance_records a JOIN students s ON a.student_id = s.student_id
+            WHERE a.session_id = ? ORDER BY a.timestamp ASC;
             """,
             (str(session_id),)
-        )
-        db_records = cursor.fetchall()
+        ).fetchall()
         conn.close()
-
         return [
             {
                 'student_id': r['student_id'],
                 'roll_no': r['roll_no'],
                 'student_name': r['student_name'],
                 'timestamp': r['timestamp'],
-                'method': r['marking_method']
+                'method': r['marking_method'],
+                'status': r['status'],
+                'confidence': r['confidence_score'],
             }
-            for r in db_records
+            for r in rows
         ]
 
-    def record_attendance(self, session_id: Any, student_id: Any, method: str = 'Face Recognition', confidence: Optional[float] = None) -> bool:
-        """Persist attendance mark into SQLite database using authoritative AttendanceService."""
-        student = self.get_student_by_id(student_id) if str(student_id).isdigit() else self.get_student_by_roll(str(student_id))
+    def get_session_report(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Present / absent breakdown for one session (absent = on the roster, no record)."""
+        details = self.get_session_details(session_id)
+        if not details:
+            return None
+        records = {r['student_id']: r for r in self.get_attendance_records(session_id)}
+        roster = self.get_enrolled_students_for_session(session_id)
+        return {
+            'session': details,
+            'present': [{**s, **records[s['student_id']]} for s in roster if s['student_id'] in records],
+            'absent': [s for s in roster if s['student_id'] not in records],
+        }
+
+    def record_attendance(self, session_id: Any, student_id: Any, method: str = 'Face Recognition',
+                          confidence: Optional[float] = None) -> bool:
+        student = self.get_student_by_id(student_id)
         if not student:
             return False
-
         from attendance_service import AttendanceService
-        ok, msg, rec = AttendanceService.record_attendance(
+        ok, _, _ = AttendanceService.record_attendance(
             session_id=str(session_id),
             student_id=student['student_id'],
             method=method,
@@ -501,92 +489,71 @@ class DataProvider:
         )
         return ok
 
-    def get_reports_data(self, course_id: Optional[str] = None) -> Dict[str, Any]:
-        """Aggregate authentic attendance analytics and session audits from SQLite."""
-        conn = database.get_db_connection(self.db_path)
-        cursor = conn.cursor()
+    # -------------------------------------------------------------------------
+    # Reports
+    # -------------------------------------------------------------------------
 
-        courses = self.get_all_courses()
+    def get_reports_data(self, course_id: Optional[str] = None, section: Optional[str] = None,
+                         faculty_id: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Attendance analytics. ``course_id`` / ``section`` narrow the view; ``faculty_id`` restricts a
+        teacher to their own course sections.
+        """
+        from attendance_service import AttendanceService
 
-        selected_course_row = None
+        courses = self.get_all_courses(faculty_id)
+        if isinstance(section, str) and section.upper() in ('', 'ALL'):
+            section = None
+        section = section.upper() if section else None
+
+        selected = None
         if course_id and str(course_id).lower() != 'all':
-            for c in courses:
-                if str(c['id']) == str(course_id) or str(c['course_id']) == str(course_id) or str(c['code']).lower() == str(course_id).lower():
-                    selected_course_row = c
-                    break
-
-        student_reports = []
-        session_logs = []
-
-        target_courses = [selected_course_row] if selected_course_row else courses
-
-        for c_entry in target_courses:
-            cid = c_entry['course_id']
-            from attendance_service import AttendanceService
-            rep = AttendanceService.get_course_attendance_report(cid, self.db_path)
-            if 'student_reports' in rep:
-                for sr in rep['student_reports']:
-                    student_reports.append({
-                        'student_id': sr['student_id'],
-                        'roll_no': sr['roll_number'],
-                        'student_name': sr['name'],
-                        'course_id': c_entry['id'],
-                        'course_code': c_entry['code'],
-                        'attended_sessions': sr['attended_sessions'],
-                        'total_sessions': sr['total_sessions'],
-                        'percentage': sr['attendance_percentage']
-                    })
-
-            cursor.execute(
-                """
-                SELECT s.*, c.course_code, c.course_name,
-                       (SELECT COUNT(*) FROM attendance_records a WHERE a.session_id = s.session_id AND a.status = 'Present') AS present_count,
-                       (SELECT COUNT(*) FROM enrollments e WHERE e.course_id = s.course_id) AS total_enrolled
-                FROM class_sessions s
-                JOIN courses c ON s.course_id = c.course_id
-                WHERE s.course_id = ?
-                ORDER BY s.date DESC, s.start_time DESC;
-                """,
-                (cid,)
+            selected = next(
+                (c for c in courses if str(c['course_id']) == str(course_id) or str(c['code']).lower() == str(course_id).lower()),
+                None
             )
-            for s_row in cursor.fetchall():
-                enrolled = s_row['total_enrolled'] or 0
-                present = s_row['present_count'] or 0
-                pct = int(round((present / max(1, enrolled)) * 100)) if enrolled > 0 else 0
-                session_logs.append({
-                    'id': s_row['session_id'],
-                    'course_code': s_row['course_code'],
-                    'course_name': s_row['course_name'],
-                    'date': s_row['date'],
-                    'start_time': s_row['start_time'],
-                    'present_count': present,
-                    'total_enrolled': enrolled,
-                    'attendance_percentage': pct,
-                    'status': s_row['status'].upper()
+        targets = [selected] if selected else courses
+
+        student_reports, session_logs = [], []
+        for c in targets:
+            allowed = {s['section'] for s in c['my_sections']} if faculty_id and c['my_sections'] else None
+            rep = AttendanceService.get_course_attendance_report(c['course_id'], self.db_path, section=section)
+            for sr in rep.get('student_reports', []):
+                if allowed is not None and sr['section'] not in allowed:
+                    continue
+                student_reports.append({
+                    'student_id': sr['student_id'],
+                    'roll_no': sr['roll_number'],
+                    'student_name': sr['name'],
+                    'section': sr['section'],
+                    'course_id': c['course_id'],
+                    'course_code': c['code'],
+                    'attended_sessions': sr['attended_sessions'],
+                    'total_sessions': sr['total_sessions'],
+                    'percentage': sr['attendance_percentage'],
                 })
+            for r in self._session_rows(None, course_id=c['course_id']):
+                sec = r['section']
+                if section and sec not in (section, 'ALL'):
+                    continue
+                if allowed is not None and sec != 'ALL' and sec not in allowed:
+                    continue
+                session_logs.append(self._session_payload(r))
 
-        conn.close()
-
-        total_sessions = len(session_logs)
-        total_students = len(student_reports)
-        eligible_count = sum(1 for s in student_reports if s['percentage'] >= 75.0)
-        warning_count = sum(1 for s in student_reports if s['percentage'] < 75.0)
-
-        summary = {
-            'total_sessions': total_sessions,
-            'total_students': total_students,
-            'eligible_count': eligible_count,
-            'warning_count': warning_count
-        }
-
+        measured = [s for s in student_reports if s['percentage'] is not None]
         return {
             'courses': courses,
+            'sections': self.get_sections(),
             'student_reports': student_reports,
             'session_logs': session_logs,
-            'summary': summary
+            'summary': {
+                'total_sessions': len(session_logs),
+                'total_students': len(student_reports),
+                'eligible_count': sum(1 for s in measured if s['percentage'] >= LOW_ATTENDANCE_THRESHOLD),
+                'warning_count': sum(1 for s in measured if s['percentage'] < LOW_ATTENDANCE_THRESHOLD),
+            },
         }
 
 
 # Global singleton instance
 data_provider = DataProvider()
-

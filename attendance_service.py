@@ -21,7 +21,8 @@ from models import (
     CourseModel,
     EnrollmentModel,
     ClassSessionModel,
-    AttendanceRecordModel
+    AttendanceRecordModel,
+    CourseSectionModel
 )
 
 
@@ -32,6 +33,7 @@ class AttendanceService:
         faculty_id: str,
         topic: Optional[str] = "Regular Lecture / Lab Evaluation",
         room: Optional[str] = "Lab 204, Academic Block 3",
+        section: Optional[str] = "All",
         db_path=None
     ) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
         """
@@ -51,12 +53,13 @@ class AttendanceService:
         if not course:
             return False, f"Course '{course_id}' does not exist.", None
 
-        # Verify faculty is authorized for this course
-        if course['faculty_id'] != faculty_id:
-            assigned_name = course.get('faculty_name') or course['faculty_id']
+        # Verify faculty teaches this section of the course
+        section = (section or "All").strip()
+        if not CourseSectionModel.can_teach(course_id, section, faculty_id, db_path):
+            scope = f"section {section.upper()} of " if section.upper() != 'ALL' else ""
             return (
                 False,
-                f"Faculty '{faculty_id}' ({faculty['name']}) is not authorized to start session for course '{course['course_code']}' (assigned to {assigned_name}).",
+                f"Faculty '{faculty_id}' ({faculty['name']}) is not authorized to start session for {scope}course '{course['course_code']}' (not assigned to teach it).",
                 None
             )
 
@@ -64,8 +67,8 @@ class AttendanceService:
         date_str = now.strftime('%Y-%m-%d')
         time_str = now.strftime('%H:%M:%S')
 
-        # Close existing active session if any
-        active_existing = ClassSessionModel.get_active_session_for_course(course_id, db_path)
+        # Close this section's previous active session (other sections' live sessions are untouched)
+        active_existing = ClassSessionModel.get_active_session_for_course(course_id, db_path, section=section)
         if active_existing:
             ClassSessionModel.close_session(active_existing['session_id'], time_str, db_path)
 
@@ -80,6 +83,7 @@ class AttendanceService:
             start_time=time_str,
             room=room,
             topic=topic,
+            section=section.upper() if section.upper() != 'ALL' else 'All',
             db_path=db_path
         )
 
@@ -153,6 +157,17 @@ class AttendanceService:
                 None
             )
 
+        # Rule 3b: Validate section eligibility if session is restricted to a specific section
+        session_sec = session.get('section')
+        student_sec = student.get('section') or 'A'
+        if session_sec and session_sec.upper() not in ('ALL', ''):
+            if student_sec.upper() != session_sec.upper():
+                return (
+                    False,
+                    f"Section Mismatch: {student['name']} ({student['roll_number']}) is in Section {student_sec}, but session {session_id} is restricted to Section {session_sec}.",
+                    None
+                )
+
         # Rule 4: Duplicate prevention check
         existing = AttendanceRecordModel.check_existing(session_id, actual_student_id, db_path)
         if existing:
@@ -218,66 +233,65 @@ class AttendanceService:
         return False, f"Record #{attendance_id} not found."
 
     @staticmethod
-    def get_course_attendance_report(course_id: str, db_path=None) -> Dict[str, Any]:
+    def get_course_attendance_report(course_id: str, db_path=None, section: Optional[str] = None) -> Dict[str, Any]:
         """
-        Generates full academic attendance report for a course:
-        - Total sessions held
-        - For each enrolled student:
-          * Sessions attended
-          * Attendance percentage
-          * Low attendance warning (< 75%)
+        Attendance report for a course (optionally one section).
+
+        A student is only measured against the sessions they could have attended: sessions held
+        for their own section plus whole-course ('All') sessions. A course with no sessions yet
+        reports ``attendance_percentage = None`` rather than a misleading 100%.
         """
         course = CourseModel.get_by_id(course_id, db_path)
         if not course:
             return {"error": f"Course '{course_id}' not found."}
 
-        # Get all completed or active sessions for this course
+        if isinstance(section, str) and section.upper() in ('', 'ALL'):
+            section = None
+        section = section.upper() if section else None
+
         with get_db_cursor(db_path, commit=False) as cursor:
             cursor.execute(
-                "SELECT session_id, date, start_time, status FROM class_sessions WHERE course_id = ? ORDER BY date ASC;",
+                """
+                SELECT session_id, date, start_time, status, COALESCE(UPPER(section), 'ALL') AS section
+                FROM class_sessions WHERE course_id = ? ORDER BY date ASC, start_time ASC;
+                """,
                 (course_id,)
             )
-            sessions = [dict(row) for row in cursor.fetchall()]
+            all_sessions = [dict(row) for row in cursor.fetchall()]
+            cursor.execute(
+                """
+                SELECT student_id, COUNT(*) AS n FROM attendance_records
+                WHERE course_id = ? AND status IN ('Present', 'Late') GROUP BY student_id;
+                """,
+                (course_id,)
+            )
+            attended_by_student = {r['student_id']: r['n'] for r in cursor.fetchall()}
 
-        total_sessions = len(sessions)
-        session_ids = [s['session_id'] for s in sessions]
-
-        # Get all enrolled students
-        enrolled_students = EnrollmentModel.get_enrolled_students(course_id, db_path)
+        sessions = [s for s in all_sessions if section is None or s['section'] in (section, 'ALL')]
+        enrolled_students = EnrollmentModel.get_enrolled_students(course_id, db_path, section=section)
 
         student_reports = []
         for s in enrolled_students:
-            student_id = s['student_id']
-            # Count present / late records for this student in this course's sessions
-            with get_db_cursor(db_path, commit=False) as cursor:
-                cursor.execute(
-                    """
-                    SELECT COUNT(*) as attended_count
-                    FROM attendance_records
-                    WHERE student_id = ? AND course_id = ? AND status IN ('Present', 'Late');
-                    """,
-                    (student_id, course_id)
-                )
-                attended_count = cursor.fetchone()['attended_count']
-
-            # Calculate percentage
-            percentage = round((attended_count / total_sessions * 100), 2) if total_sessions > 0 else 100.0
-            is_low = percentage < 75.0
-
+            student_section = (s.get('section') or 'A').upper()
+            applicable = sum(1 for x in all_sessions if x['section'] in (student_section, 'ALL'))
+            attended = min(attended_by_student.get(s['student_id'], 0), applicable) if applicable else 0
+            percentage = round(attended / applicable * 100, 2) if applicable > 0 else None
             student_reports.append({
-                'student_id': student_id,
+                'student_id': s['student_id'],
                 'roll_number': s['roll_number'],
                 'name': s['name'],
                 'email': s['email'],
-                'total_sessions': total_sessions,
-                'attended_sessions': attended_count,
+                'section': student_section,
+                'total_sessions': applicable,
+                'attended_sessions': attended,
                 'attendance_percentage': percentage,
-                'low_attendance_warning': is_low,
+                'low_attendance_warning': percentage is not None and percentage < 75.0,
             })
 
         return {
             'course': course,
-            'total_sessions_held': total_sessions,
+            'section': section,
+            'total_sessions_held': len(sessions),
             'total_enrolled': len(enrolled_students),
             'student_reports': student_reports,
             'sessions': sessions
@@ -324,7 +338,7 @@ class AttendanceService:
                 row['email'],
                 row['total_sessions'],
                 row['attended_sessions'],
-                f"{row['attendance_percentage']}%",
+                f"{row['attendance_percentage']}%" if row['attendance_percentage'] is not None else "N/A",
                 "YES - DEFICIENCY" if row['low_attendance_warning'] else "NO"
             ])
 

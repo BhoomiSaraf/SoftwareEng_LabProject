@@ -31,27 +31,74 @@
             </select>
         </div>
 
-        <div class="col-md-4 col-lg-3">
-            <label for="reportStatusFilter" class="form-label text-muted fs-xs text-uppercase fw-semibold mb-1">Attendance Criteria</label>
-            <select id="reportStatusFilter" class="form-select form-tech-control">
-                <option value="all">All Students</option>
-                <option value="eligible">Eligible (&gt;= 75% Attendance)</option>
-                <option value="warning">Low Attendance Warning (&lt; 75%)</option>
+        <div class="col-md-4 col-lg-2">
+            <label for="reportSectionFilter" class="form-label text-muted fs-xs text-uppercase fw-semibold mb-1">Section</label>
+            <select id="reportSectionFilter" class="form-select form-tech-control">
+                <option value="all">All Sections</option>
+                {% for sec in sections %}
+                <option value="{{ sec }}" {% if selected_section == sec %}selected{% endif %}>Section {{ sec }}</option>
+                {% endfor %}
             </select>
         </div>
 
-        <div class="col-md-4 col-lg-3">
-            <label for="reportSearchInput" class="form-label text-muted fs-xs text-uppercase fw-semibold mb-1">Search Roster</label>
-            <input type="text" id="reportSearchInput" class="form-tech-control form-control" placeholder="Search student name or roll no...">
+        <div class="col-md-4 col-lg-2">
+            <label for="reportStatusFilter" class="form-label text-muted fs-xs text-uppercase fw-semibold mb-1">Attendance Criteria</label>
+            <select id="reportStatusFilter" class="form-select form-tech-control">
+                <option value="all">All Students</option>
+                <option value="eligible">Eligible (&gt;= 75%)</option>
+                <option value="warning">Low attendance (&lt; 75%)</option>
+                <option value="none">No sessions yet</option>
+            </select>
         </div>
 
-        <div class="col-md-12 col-lg-3 text-lg-end pt-lg-3">
+        <div class="col-md-8 col-lg-3">
+            <label for="reportSearchInput" class="form-label text-muted fs-xs text-uppercase fw-semibold mb-1">Search</label>
+            <input type="text" id="reportSearchInput" class="form-tech-control form-control" placeholder="Student name or roll no...">
+        </div>
+
+        <div class="col-md-4 col-lg-2 text-lg-end pt-lg-3">
             <span class="badge bg-dark-card border border-subtle text-muted fs-xs py-2 px-3 rounded-pill">
-                <i class="bi bi-info-circle text-primary me-1"></i> Academic Lab Threshold: <strong>75%</strong>
+                Threshold <strong>75%</strong>
             </span>
         </div>
     </div>
 </div>
+
+{% if session_report %}
+<!-- Single-session breakdown -->
+<div class="card-tech accent-primary p-4 mb-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+        <div>
+            <h4 class="h5 fw-bold mb-1">
+                Session report: {{ session_report.session.course_code }}
+                <span class="badge bg-primary-soft text-primary font-monospace fs-xxs ms-1">Sec {{ session_report.session.section }}</span>
+            </h4>
+            <div class="text-slate-300 fs-xs">{{ session_report.session.course_name }} &middot; {{ session_report.session.date }} {{ session_report.session.start_time }} &middot; {{ session_report.session.status|title }}</div>
+        </div>
+        <div class="fs-sm text-white"><strong>{{ session_report.present|length }}</strong> present &middot; <strong>{{ session_report.absent|length }}</strong> absent &middot; {{ session_report.session.attendance_percentage }}%</div>
+    </div>
+    <div class="row g-3">
+        <div class="col-md-6">
+            <div class="text-muted fs-xxs text-uppercase fw-semibold mb-2">Present</div>
+            {% for s in session_report.present %}
+            <div class="d-flex justify-content-between px-3 py-2 mb-1 rounded-3 bg-dark-glass border border-subtle fs-sm">
+                <span class="text-white">{{ s.name }} <span class="text-slate-300 fs-xs font-monospace">{{ s.roll_no }}</span></span>
+                <span class="text-slate-300 fs-xs">{{ s.timestamp }} &middot; {{ s.method }}</span>
+            </div>
+            {% else %}<div class="text-slate-300 fs-xs">Nobody marked present.</div>{% endfor %}
+        </div>
+        <div class="col-md-6">
+            <div class="text-muted fs-xxs text-uppercase fw-semibold mb-2">Absent</div>
+            {% for s in session_report.absent %}
+            <div class="d-flex justify-content-between px-3 py-2 mb-1 rounded-3 bg-dark-glass border border-subtle fs-sm">
+                <span class="text-white">{{ s.name }}</span>
+                <span class="text-slate-300 fs-xs font-monospace">{{ s.roll_no }}</span>
+            </div>
+            {% else %}<div class="text-slate-300 fs-xs">Everyone on the roster was present.</div>{% endfor %}
+        </div>
+    </div>
+</div>
+{% endif %}
 
 <!-- Report Summary Cards -->
 <div class="row g-3 mb-4">
@@ -113,6 +160,7 @@
                             <th>Roll Number</th>
                             <th>Student Name</th>
                             <th>Course</th>
+                            <th>Sec</th>
                             <th>Attended / Total</th>
                             <th>Percentage</th>
                             <th>Status Badge</th>
@@ -125,7 +173,7 @@
                                 data-name="{{ item.student_name|lower }}" 
                                 data-roll="{{ item.roll_no|lower }}" 
                                 data-course="{{ item.course_id }}" 
-                                data-status="{{ 'eligible' if item.percentage >= 75 else 'warning' }}">
+                                data-status="{{ 'none' if item.percentage is none else ('eligible' if item.percentage >= 75 else 'warning') }}">
                                 <td>
                                     <span class="badge bg-dark-card text-primary border border-primary-subtle font-monospace px-2 py-1 fs-xs">
                                         {{ item.roll_no }}
@@ -133,11 +181,15 @@
                                 </td>
                                 <td class="fw-semibold text-white fs-sm">{{ item.student_name }}</td>
                                 <td class="text-muted fs-xs">{{ item.course_code }}</td>
+                                <td class="text-muted fs-xs">{{ item.section }}</td>
                                 <td>
                                     <span class="fw-bold text-white fs-sm">{{ item.attended_sessions }}</span>
                                     <span class="text-muted fs-xs">/ {{ item.total_sessions }}</span>
                                 </td>
                                 <td style="width: 220px;">
+                                    {% if item.percentage is none %}
+                                    <span class="text-slate-300 fs-xs font-monospace">N/A</span>
+                                    {% else %}
                                     <div class="d-flex align-items-center gap-2">
                                         <div class="progress flex-grow-1" style="height: 6px; background: rgba(255,255,255,0.06); border-radius: 9999px;">
                                             <div class="progress-bar {% if item.percentage >= 75 %}bg-success{% else %}bg-warning{% endif %}" role="progressbar" style="width: {{ item.percentage }}%;" aria-valuenow="{{ item.percentage }}" aria-valuemin="0" aria-valuemax="100"></div>
@@ -146,9 +198,12 @@
                                             {{ item.percentage }}%
                                         </span>
                                     </div>
+                                    {% endif %}
                                 </td>
                                 <td>
-                                    {% if item.percentage >= 75 %}
+                                    {% if item.percentage is none %}
+                                    <span class="badge bg-dark-card border border-subtle text-slate-300 rounded-pill px-2 py-1 fs-xs">No sessions yet</span>
+                                    {% elif item.percentage >= 75 %}
                                     <span class="badge badge-soft-success rounded-pill px-2 py-1 fs-xs">
                                         <i class="bi bi-check-circle-fill me-1"></i> Eligible
                                     </span>
@@ -162,8 +217,8 @@
                             {% endfor %}
                         {% else %}
                             <tr>
-                                <td colspan="6" class="text-center py-4 text-muted">
-                                    No attendance metrics recorded for this selection.
+                                <td colspan="7" class="text-center py-4 text-muted">
+                                    No students for this selection.
                                 </td>
                             </tr>
                         {% endif %}
@@ -179,7 +234,7 @@
                     <thead>
                         <tr>
                             <th>Session ID</th>
-                            <th>Course</th>
+                            <th>Course / Section</th>
                             <th>Date &amp; Time</th>
                             <th>Attendance Count</th>
                             <th>Attendance Rate</th>
@@ -191,12 +246,12 @@
                             {% for sess in session_logs %}
                             <tr>
                                 <td>
-                                    <span class="badge bg-dark-card border border-subtle text-muted font-monospace fs-xs">
-                                        #{{ sess.id }}
-                                    </span>
+                                    <a href="{{ url_for('frontend.reports', session_id=sess.id) }}" class="badge bg-dark-card border border-subtle text-primary font-monospace fs-xs text-decoration-none">
+                                        {{ sess.id }}
+                                    </a>
                                 </td>
                                 <td>
-                                    <div class="fw-semibold text-white fs-sm">{{ sess.course_code }}</div>
+                                    <div class="fw-semibold text-white fs-sm">{{ sess.course_code }} <span class="badge bg-primary-soft text-primary font-monospace fs-xxs">Sec {{ sess.section }}</span></div>
                                     <div class="text-muted fs-xs">{{ sess.course_name }}</div>
                                 </td>
                                 <td>
