@@ -55,7 +55,7 @@ The following diagram illustrates the interaction between presentation, security
 ```mermaid
 flowchart TD
     subgraph Clients["Presentation & Capture Layer"]
-        A1["Browser Client (Faculty/Admin)"]
+        A1["Browser Client (Faculty / Admin)"]
         A2["WebRTC Live Camera Feed"]
         A3["Hardware Camera Kiosk"]
     end
@@ -89,18 +89,22 @@ flowchart TD
         E4["Class Sessions & Attendance Records"]
     end
 
-    A1 -->|Browser Session + CSRF| B1
-    A2 -->|Base64 JPEG Frame| B4
-    A3 -->|X-API-Key (CSRF Exempt)| B3
-    B1 --> B2 --> B4
+    A1 -->|"Browser Session"| B1
+    B1 --> B2
+    B2 --> B4
+    A2 -->|"Live Frame Input"| B4
+    A3 -->|"Kiosk API Key"| B3
     B3 --> B4
-    B4 -->|Frame Input| C1
-    C1 --> C2 --> C3 --> C4
-    C5 <-->|Load / Save Float32 Arrays| C4
-    C4 -->|Matched Student ID| D1
-    B4 -->|Session & Attendance Actions| D1
-    D1 --> D2 --> D3
-    D1 <-->|Transactional Reads / Writes| E1
+    B4 --> C1
+    C1 --> C2
+    C2 --> C3
+    C3 --> C4
+    C4 -.->|"Load / Save Embeddings"| C5
+    C4 -->|"Matched Student ID"| D1
+    B4 -->|"Session Management"| D1
+    D1 --> D2
+    D2 --> D3
+    D3 -->|"Enforce & Record"| E1
     E1 --- E2
     E1 --- E3
     E1 --- E4
