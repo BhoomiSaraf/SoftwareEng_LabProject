@@ -60,3 +60,8 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# Temporary audit and diff exports
+task*.txt
+task*_tests.py
+

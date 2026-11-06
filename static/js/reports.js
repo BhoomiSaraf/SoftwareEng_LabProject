@@ -68,16 +68,18 @@
             if (response.ok && response.headers.get('content-type')?.includes('text/csv')) {
                 const blob = await response.blob();
                 downloadBlob(blob, `smart_attendance_report_${selectedCourse}.csv`);
-                showToast('Attendance report exported successfully (Server)', 'success');
+                showToast('Attendance report exported successfully', 'success');
             } else {
-                // Client-side fallback from visible table data
-                exportTableToCsv();
-                showToast('Attendance report exported successfully (Client)', 'success');
+                let errMessage = 'Failed to export CSV report from server.';
+                try {
+                    const errData = await response.json();
+                    if (errData && errData.error) errMessage = errData.error;
+                } catch (_) {}
+                showToast(errMessage, 'danger');
             }
         } catch (err) {
-            console.warn('Backend CSV export unavailable, utilizing client generator fallback:', err);
-            exportTableToCsv();
-            showToast('Attendance report exported successfully', 'success');
+            console.error('Backend CSV export error:', err);
+            showToast('Failed to export CSV: ' + err.message, 'danger');
         } finally {
             exportBtn.disabled = false;
             exportBtn.innerHTML = '<i class="bi bi-file-earmark-arrow-down-fill me-1"></i> Export CSV Report';

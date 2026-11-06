@@ -9,6 +9,7 @@ import sqlite3
 import datetime
 from typing import List, Dict, Any, Optional
 import database
+from config import Config
 from face_recognition_service import face_service
 
 DB_PATH = database.DEFAULT_DB_PATH
@@ -18,122 +19,21 @@ EMBEDDINGS_FILE = os.path.join(EMBEDDINGS_DIR, 'embeddings.npz')
 
 
 class DataProvider:
-    def __init__(self, db_path: Optional[str] = None):
+    def __init__(self, db_path: Optional[str] = None, embeddings_path: Optional[str] = None):
         self.db_path = db_path or DB_PATH
+        self.embeddings_path = embeddings_path or getattr(Config, 'EMBEDDINGS_FILE', EMBEDDINGS_FILE)
         self._init_database()
         self._load_face_embeddings()
 
     def _init_database(self):
-        """Ensure SQLite schema is initialized and base seed data is populated."""
+        """Ensure SQLite schema is initialized without seeding fake runtime records."""
         database.init_db(self.db_path)
 
-        # Check if students exist in SQLite database
-        conn = database.get_db_connection(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) AS count FROM students;")
-        count = cursor.fetchone()['count']
-
-        if count == 0:
-            # Seed base students (matching course CSE3132 / CS301 roster)
-            initial_students = [
-                ('STU001', '21BCE001', 'Aarav Sharma', 'aarav.s@college.edu', 'B.Tech CSE', 5, 1),
-                ('STU002', '21BCE002', 'Aditi Patel', 'aditi.p@college.edu', 'B.Tech CSE', 5, 1),
-                ('STU003', '21BCE003', 'Alex Morgan', 'alex.m@college.edu', 'B.Tech CSE', 5, 1),
-                ('STU004', '21BCE004', 'Bhoomi Saraf', 'bhoomi.s@college.edu', 'B.Tech CSE', 5, 1),
-                ('STU005', '21BCE005', 'Chirag Dave', 'chirag.d@college.edu', 'B.Tech CSE', 5, 0),
-                ('STU006', '21BCE006', 'Divya Nair', 'divya.n@college.edu', 'B.Tech CSE', 5, 1),
-            ]
-            cursor.executemany(
-                """
-                INSERT OR IGNORE INTO students (student_id, roll_number, name, email, program, semester, face_registered)
-                VALUES (?, ?, ?, ?, ?, ?, ?);
-                """,
-                initial_students
-            )
-
-            # Seed base courses if needed (development/testing environments only)
-            cursor.execute("SELECT COUNT(*) AS count FROM courses;")
-            course_count = cursor.fetchone()['count']
-            from config import Config
-            if course_count == 0 and not Config.IS_PRODUCTION:
-                from werkzeug.security import generate_password_hash
-                # Seed faculty user first to satisfy foreign key constraint
-                cursor.execute(
-                    "INSERT OR IGNORE INTO users (id, username, password_hash, role) VALUES (?, ?, ?, ?);",
-                    (1, 'faculty@college.edu', generate_password_hash('faculty123'), 'faculty')
-                )
-                cursor.execute(
-                    "INSERT OR IGNORE INTO faculty (faculty_id, user_id, name, email, department) VALUES (?, ?, ?, ?, ?);",
-                    ('FAC001', 1, 'Dr. Alan Turing', 'alan.turing@college.edu', 'Computer Science & Engineering')
-                )
-                initial_courses = [
-                    ('CS301', 'CS301', 'Software Engineering Lab', 2, 'FAC001', 5, '2026-2027'),
-                    ('CS304', 'CS304', 'Machine Learning', 3, 'FAC001', 5, '2026-2027'),
-                    ('CS306', 'CS306', 'Operating Systems', 3, 'FAC001', 5, '2026-2027'),
-                ]
-                cursor.executemany(
-                    """
-                    INSERT OR IGNORE INTO courses (course_id, course_code, course_name, credits, faculty_id, semester, academic_year)
-                    VALUES (?, ?, ?, ?, ?, ?, ?);
-                    """,
-                    initial_courses
-                )
-
-            # Enroll all initial students into CS301
-            for s in initial_students:
-                cursor.execute(
-                    "INSERT OR IGNORE INTO enrollments (course_id, student_id) VALUES (?, ?);",
-                    ('CS301', s[0])
-                )
-
-            # Enroll students 1, 2, 6 into CS304
-            for sid in ['STU001', 'STU002', 'STU006']:
-                cursor.execute(
-                    "INSERT OR IGNORE INTO enrollments (course_id, student_id) VALUES (?, ?);",
-                    ('CS304', sid)
-                )
-
-            # Enroll students 3, 4 into CS306
-            for sid in ['STU003', 'STU004']:
-                cursor.execute(
-                    "INSERT OR IGNORE INTO enrollments (course_id, student_id) VALUES (?, ?);",
-                    ('CS306', sid)
-                )
-
-            conn.commit()
-
-        # Ensure session 101 exists in SQLite database with persisted attendance
-        cursor.execute("SELECT COUNT(*) AS count FROM class_sessions WHERE session_id = '101';")
-        if cursor.fetchone()['count'] == 0:
-            cursor.execute("SELECT 1 FROM courses WHERE course_id = 'CS301';")
-            if cursor.fetchone():
-                cursor.execute(
-                    """
-                    INSERT OR IGNORE INTO class_sessions (session_id, course_id, faculty_id, date, start_time, status, room, topic)
-                    VALUES ('101', 'CS301', 'FAC001', '2026-10-27', '09:00:00', 'Active', 'Lab 204, Academic Block 3', 'Software Engineering Lab');
-                    """
-                )
-                initial_marked = [
-                    ('101', 'STU001', 'CS301', '09:02:14 AM', 'Present', 'Face Recognition', 0.95),
-                    ('101', 'STU002', 'CS301', '09:03:05 AM', 'Present', 'Face Recognition', 0.92),
-                    ('101', 'STU003', 'CS301', '09:04:12 AM', 'Present', 'Face Recognition', 0.89),
-                ]
-                cursor.executemany(
-                    """
-                    INSERT OR IGNORE INTO attendance_records 
-                    (session_id, student_id, course_id, timestamp, status, marking_method, confidence_score, verified_by)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 'Face Recognition System');
-                    """,
-                    initial_marked
-                )
-                conn.commit()
-
-        conn.close()
-
     def _load_face_embeddings(self):
-        """Auto-load any persisted embeddings from disk into face_service."""
-        if os.path.exists(EMBEDDINGS_FILE):
-            face_service.load_embeddings(EMBEDDINGS_FILE)
+        """Auto-load any persisted embeddings from configured storage into face_service."""
+        target_path = self.embeddings_path or getattr(Config, 'EMBEDDINGS_FILE', EMBEDDINGS_FILE)
+        if target_path and os.path.exists(target_path):
+            face_service.load_embeddings(target_path)
 
     # -------------------------------------------------------------------------
     # Student Operations
@@ -241,15 +141,6 @@ class DataProvider:
             (new_sid, roll_no, name, email, program, semester)
         )
 
-        # Automatically enroll into default course if it exists
-        cursor.execute("SELECT course_id FROM courses WHERE course_id = 'CS301' OR course_id LIKE 'CRS-%' LIMIT 1;")
-        default_course = cursor.fetchone()
-        if default_course:
-            cursor.execute(
-                "INSERT OR IGNORE INTO enrollments (course_id, student_id) VALUES (?, ?);",
-                (default_course['course_id'], new_sid)
-            )
-
         conn.commit()
         conn.close()
 
@@ -261,7 +152,7 @@ class DataProvider:
             'email': email,
             'has_face': False,
             'face_samples_count': 0,
-            'course_codes': [default_course['course_id']] if default_course else []
+            'course_codes': []
         }
 
     def get_student_by_id(self, student_id: int) -> Optional[Dict[str, Any]]:
@@ -322,32 +213,67 @@ class DataProvider:
                 'course_id': r['course_id'],
                 'code': r['course_code'],
                 'name': r['course_name'],
-                'faculty_name': r['faculty_name'] or 'Dr. Alan Turing',
+                'faculty_id': r['faculty_id'],
+                'faculty_name': r['faculty_name'] or '',
+                'credits': r['credits'],
+                'semester': r['semester'],
+                'academic_year': r['academic_year'],
                 'enrolled_count': r['enrolled_count'],
                 'sessions_count': r['sessions_count'],
                 'description': f"Credits: {r['credits']} | Semester {r['semester']} ({r['academic_year']})"
             })
         return results
 
-    def create_course(self, code: str, name: str, description: str = "") -> Optional[Dict[str, Any]]:
-        """Insert a newly created course into SQLite database."""
+    def create_course(
+        self,
+        code: str,
+        name: str,
+        description: str = "",
+        faculty_id: Optional[str] = None,
+        credits: Optional[int] = None,
+        semester: Optional[int] = None,
+        academic_year: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Insert a newly created course into SQLite database with verified faculty assignment and validated attributes."""
         code = code.strip().upper()
         name = name.strip()
         conn = database.get_db_connection(self.db_path)
         cursor = conn.cursor()
 
-        cursor.execute("SELECT faculty_id FROM faculty LIMIT 1;")
+        if not faculty_id:
+            conn.close()
+            raise ValueError("Faculty assignment is required to create a course.")
+
+        cursor.execute("SELECT faculty_id FROM faculty WHERE faculty_id = ?;", (faculty_id,))
         fac_row = cursor.fetchone()
-        faculty_id = fac_row['faculty_id'] if fac_row else 'FAC001'
+        if not fac_row:
+            conn.close()
+            raise ValueError(f"Faculty '{faculty_id}' does not exist.")
+        assigned_faculty_id = fac_row['faculty_id']
+
+        # Validate credits
+        course_credits = int(credits) if credits is not None else getattr(Config, 'DEFAULT_COURSE_CREDITS', 3)
+        if course_credits <= 0:
+            conn.close()
+            raise ValueError(f"Invalid course credits: {course_credits}. Must be a positive integer.")
+
+        # Validate semester
+        course_semester = int(semester) if semester is not None else getattr(Config, 'DEFAULT_COURSE_SEMESTER', 5)
+        if not (1 <= course_semester <= 12):
+            conn.close()
+            raise ValueError(f"Invalid semester: {course_semester}. Must be between 1 and 12.")
+
+        # Academic year
+        course_academic_year = str(academic_year).strip() if academic_year else getattr(Config, 'DEFAULT_ACADEMIC_YEAR', '2026-2027')
 
         course_id = f"CRS-{code}"
         try:
             cursor.execute(
                 """
                 INSERT INTO courses (course_id, course_code, course_name, credits, faculty_id, semester, academic_year)
-                VALUES (?, ?, ?, 3, ?, 5, '2026-2027');
+                VALUES (?, ?, ?, ?, ?, ?, ?);
                 """,
-                (course_id, code, name, faculty_id)
+                (course_id, code, name, course_credits, assigned_faculty_id, course_semester, course_academic_year)
             )
             conn.commit()
             conn.close()
@@ -357,7 +283,7 @@ class DataProvider:
             conn.close()
             return None
 
-    def start_session(self, course_id: Any, topic: str = "Regular Lecture") -> str:
+    def start_session(self, course_id: Any, topic: str = "Regular Lecture", faculty_id: Optional[str] = None) -> str:
         """Start a new active attendance session in SQLite via AttendanceService."""
         conn = database.get_db_connection(self.db_path)
         cursor = conn.cursor()
@@ -372,17 +298,15 @@ class DataProvider:
                     cursor.execute("SELECT * FROM courses WHERE course_id = ?;", (c_entry['course_id'],))
                     course = cursor.fetchone()
 
-        if not course:
-            cursor.execute("SELECT * FROM courses LIMIT 1;")
-            course = cursor.fetchone()
+        conn.close()
 
         if not course:
-            conn.close()
-            raise RuntimeError("No courses exist to start an attendance session.")
+            raise ValueError(f"Course '{course_id}' does not exist.")
+
+        if not faculty_id:
+            raise ValueError("Faculty assignment is required to start an attendance session.")
 
         actual_course_id = course['course_id']
-        faculty_id = course['faculty_id']
-        conn.close()
 
         from attendance_service import AttendanceService
         success, msg, session = AttendanceService.start_session(

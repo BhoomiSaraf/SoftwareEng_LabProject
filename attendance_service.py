@@ -17,6 +17,7 @@ from typing import Tuple, Dict, Any, List, Optional
 from database import get_db_cursor
 from models import (
     StudentModel,
+    FacultyModel,
     CourseModel,
     EnrollmentModel,
     ClassSessionModel,
@@ -37,10 +38,27 @@ class AttendanceService:
         Starts a new attendance session for a given course and faculty.
         Automatically closes any existing Active session for that course to prevent orphan states.
         """
+        # Validate faculty exists
+        if not faculty_id:
+            return False, "Faculty assignment is required to start a session.", None
+
+        faculty = FacultyModel.get_by_id(faculty_id, db_path)
+        if not faculty:
+            return False, f"Faculty '{faculty_id}' does not exist.", None
+
         # Validate course
         course = CourseModel.get_by_id(course_id, db_path)
         if not course:
             return False, f"Course '{course_id}' does not exist.", None
+
+        # Verify faculty is authorized for this course
+        if course['faculty_id'] != faculty_id:
+            assigned_name = course.get('faculty_name') or course['faculty_id']
+            return (
+                False,
+                f"Faculty '{faculty_id}' ({faculty['name']}) is not authorized to start session for course '{course['course_code']}' (assigned to {assigned_name}).",
+                None
+            )
 
         now = datetime.now()
         date_str = now.strftime('%Y-%m-%d')

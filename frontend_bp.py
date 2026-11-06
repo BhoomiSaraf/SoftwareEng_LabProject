@@ -129,7 +129,15 @@ def courses():
     else:
         courses_list = []
 
-    return render_template('courses.html', active_page='courses', courses=courses_list)
+    faculty_list = []
+    if data_provider:
+        import database
+        db_path = getattr(data_provider, 'db_path', None)
+        with database.get_db_cursor(db_path, commit=False) as cursor:
+            cursor.execute("SELECT faculty_id, name, department FROM faculty ORDER BY name ASC;")
+            faculty_list = [dict(row) for row in cursor.fetchall()]
+
+    return render_template('courses.html', active_page='courses', courses=courses_list, faculty_list=faculty_list)
 
 
 @frontend_bp.route('/actions/courses/create', methods=['POST'])
@@ -138,6 +146,10 @@ def create_course_action():
     code = request.form.get('code', '').strip()
     name = request.form.get('name', '').strip()
     description = request.form.get('description', '').strip()
+    credits_raw = request.form.get('credits', '').strip()
+    semester_raw = request.form.get('semester', '').strip()
+    academic_year_raw = request.form.get('academic_year', '').strip()
+    faculty_id_form = request.form.get('faculty_id', '').strip()
 
     if not code or not name:
         flash('Course code and course title are required.', 'danger')
@@ -145,11 +157,28 @@ def create_course_action():
 
     data_provider = getattr(current_app, 'data_provider', None)
     if data_provider and hasattr(data_provider, 'create_course'):
-        course = data_provider.create_course(code, name, description)
-        if course:
-            flash(f"Course {code} ({name}) created successfully.", 'success')
-        else:
-            flash(f"Course {code} already exists or could not be created.", 'danger')
+        user = session.get('user', {})
+        user_role = str(user.get('role', '')).lower()
+        faculty_id = faculty_id_form if (user_role == 'admin' and faculty_id_form) else user.get('faculty_id')
+
+        try:
+            credits_val = int(credits_raw) if credits_raw else None
+            semester_val = int(semester_raw) if semester_raw else None
+            course = data_provider.create_course(
+                code=code,
+                name=name,
+                description=description,
+                faculty_id=faculty_id,
+                credits=credits_val,
+                semester=semester_val,
+                academic_year=academic_year_raw or None
+            )
+            if course:
+                flash(f"Course {code} ({name}) created successfully.", 'success')
+            else:
+                flash(f"Course {code} already exists or could not be created.", 'danger')
+        except Exception as err:
+            flash(f"Failed to create course: {str(err)}", 'danger')
     else:
         flash('Course service unavailable.', 'danger')
 
@@ -172,21 +201,31 @@ def start_session_action():
     user_faculty_id = user.get('faculty_id')
     user_role = str(user.get('role', '')).lower()
 
-    if user_role != 'admin' and user_faculty_id:
-        import database
-        db_path = getattr(data_provider, 'db_path', None)
-        with database.get_db_cursor(db_path, commit=False) as cursor:
-            cursor.execute(
-                "SELECT faculty_id FROM courses WHERE course_id = ? OR course_code = ?;",
-                (course_id, course_id)
-            )
-            c_row = cursor.fetchone()
-            if c_row and c_row['faculty_id'] != user_faculty_id:
-                flash("Access denied: You are not assigned to instruct this course.", 'danger')
-                return redirect(url_for('frontend.dashboard'))
+    import database
+    db_path = getattr(data_provider, 'db_path', None)
+    with database.get_db_cursor(db_path, commit=False) as cursor:
+        cursor.execute(
+            "SELECT faculty_id FROM courses WHERE course_id = ? OR course_code = ?;",
+            (str(course_id), str(course_id))
+        )
+        c_row = cursor.fetchone()
+
+    if not c_row:
+        flash(f"Course '{course_id}' not found.", 'danger')
+        return redirect(url_for('frontend.dashboard'))
+
+    course_faculty_id = c_row['faculty_id']
+
+    if user_role != 'admin':
+        if not user_faculty_id or user_faculty_id != course_faculty_id:
+            flash("Access denied: You are not assigned to instruct this course.", 'danger')
+            return redirect(url_for('frontend.dashboard'))
+        effective_faculty_id = user_faculty_id
+    else:
+        effective_faculty_id = user_faculty_id or course_faculty_id
 
     try:
-        session_id = data_provider.start_session(course_id, topic, faculty_id=user_faculty_id)
+        session_id = data_provider.start_session(course_id, topic, faculty_id=effective_faculty_id)
         flash('Attendance session initialized. Starting optical camera scanner.', 'info')
         return redirect(url_for('frontend.session_view', session_id=session_id))
     except Exception as err:

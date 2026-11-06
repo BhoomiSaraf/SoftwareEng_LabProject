@@ -61,6 +61,20 @@ class Config:
     # Database Path (Optional override)
     DB_PATH = os.environ.get('DB_PATH')
 
+    # Biometric Embeddings Path (Configurable storage location)
+    EMBEDDINGS_FILE = os.environ.get(
+        'EMBEDDINGS_FILE',
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'embeddings.npz')
+    )
+
+    # Face Recognition Matching Threshold (0.0 - 1.0)
+    RECOGNITION_THRESHOLD = float(os.environ.get('RECOGNITION_THRESHOLD', 0.65))
+
+    # Academic Course Defaults (configurable per institution)
+    DEFAULT_COURSE_CREDITS = int(os.environ.get('DEFAULT_COURSE_CREDITS', 3))
+    DEFAULT_COURSE_SEMESTER = int(os.environ.get('DEFAULT_COURSE_SEMESTER', 5))
+    DEFAULT_ACADEMIC_YEAR = os.environ.get('DEFAULT_ACADEMIC_YEAR', '2026-2027')
+
     # Camera / Kiosk API Key (strictly scoped to automated hardware camera frame submission)
     CAMERA_API_KEY = os.environ.get('CAMERA_API_KEY')
 

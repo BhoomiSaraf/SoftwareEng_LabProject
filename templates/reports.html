@@ -58,7 +58,7 @@
     <div class="col-sm-6 col-xl-3">
         <div class="card-tech p-3 accent-primary">
             <span class="text-muted fs-xs text-uppercase fw-semibold d-block mb-1">Sessions Evaluated</span>
-            <h3 class="fw-bold text-white mb-0" id="summaryTotalSessions">{{ report_summary.total_sessions|default(4) }}</h3>
+            <h3 class="fw-bold text-white mb-0" id="summaryTotalSessions">{{ report_summary.total_sessions if (report_summary and report_summary.total_sessions is defined) else 0 }}</h3>
             <span class="text-muted fs-xxs">Across selected curriculum</span>
         </div>
     </div>
@@ -66,7 +66,7 @@
     <div class="col-sm-6 col-xl-3">
         <div class="card-tech p-3 accent-info">
             <span class="text-muted fs-xs text-uppercase fw-semibold d-block mb-1">Roster Size</span>
-            <h3 class="fw-bold text-white mb-0" id="summaryTotalStudents">{{ report_summary.total_students|default(24) }}</h3>
+            <h3 class="fw-bold text-white mb-0" id="summaryTotalStudents">{{ report_summary.total_students if (report_summary and report_summary.total_students is defined) else 0 }}</h3>
             <span class="text-muted fs-xxs">Enrolled students tracked</span>
         </div>
     </div>
@@ -74,7 +74,7 @@
     <div class="col-sm-6 col-xl-3">
         <div class="card-tech p-3 accent-success">
             <span class="text-muted fs-xs text-uppercase fw-semibold d-block mb-1">Eligible Students (&ge; 75%)</span>
-            <h3 class="fw-bold text-success mb-0" id="summaryEligibleCount">{{ report_summary.eligible_count|default(21) }}</h3>
+            <h3 class="fw-bold text-success mb-0" id="summaryEligibleCount">{{ report_summary.eligible_count if (report_summary and report_summary.eligible_count is defined) else 0 }}</h3>
             <span class="text-muted fs-xxs">Ready for lab evaluations</span>
         </div>
     </div>
@@ -82,7 +82,7 @@
     <div class="col-sm-6 col-xl-3">
         <div class="card-tech p-3 accent-warning">
             <span class="text-muted fs-xs text-uppercase fw-semibold d-block mb-1">Low Attendance Alerts</span>
-            <h3 class="fw-bold text-warning mb-0" id="summaryWarningCount">{{ report_summary.warning_count|default(3) }}</h3>
+            <h3 class="fw-bold text-warning mb-0" id="summaryWarningCount">{{ report_summary.warning_count if (report_summary and report_summary.warning_count is defined) else 0 }}</h3>
             <span class="text-muted fs-xxs">Requires faculty intervention</span>
         </div>
     </div>

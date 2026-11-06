@@ -24,11 +24,12 @@ import time
 import cv2
 import numpy as np
 
+from config import Config
 from face_recognition_service import face_service
 
-EMBEDDINGS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
+EMBEDDINGS_DIR = getattr(Config, 'EMBEDDINGS_DIR', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data'))
 os.makedirs(EMBEDDINGS_DIR, exist_ok=True)
-EMBEDDINGS_FILE = os.path.join(EMBEDDINGS_DIR, 'embeddings.npz')
+EMBEDDINGS_FILE = getattr(Config, 'EMBEDDINGS_FILE', os.path.join(EMBEDDINGS_DIR, 'embeddings.npz'))
 
 STUDENT_NAME = "Bhoomi Saraf"
 STUDENT_ID = "4"
