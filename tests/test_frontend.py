@@ -5,6 +5,8 @@ session screens, duplicate attendance rejection, and CSV export.
 """
 
 import unittest
+from unittest.mock import patch
+from face_recognition_service import face_service
 from run_frontend_dev import app
 
 
@@ -121,7 +123,8 @@ class FrontendAndReportingTestCase(unittest.TestCase):
         self.assertIn(b'Export CSV Report', response.data)
         self.assertIn(b'Student Attendance Percentages', response.data)
 
-    def test_face_registration_api(self):
+    @patch.object(face_service, 'register_student_face', return_value={'success': True, 'embedding_dim': 576, 'message': 'Biometric registered'})
+    def test_face_registration_api(self, mock_reg):
         """Student face biometric registration endpoint updates student record"""
         self.login_client()
         payload = {'image': 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD...'}

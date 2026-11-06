@@ -98,6 +98,33 @@
                         <input type="text" class="form-tech-control form-control" id="courseName" name="name" placeholder="e.g. Software Engineering Lab" required>
                     </div>
 
+                    <div class="row g-2 mb-3">
+                        <div class="col-4">
+                            <label for="courseCredits" class="form-label text-muted fs-xs text-uppercase fw-semibold">Credits</label>
+                            <input type="number" class="form-tech-control form-control" id="courseCredits" name="credits" min="1" max="10" value="3" placeholder="3">
+                        </div>
+                        <div class="col-4">
+                            <label for="courseSemester" class="form-label text-muted fs-xs text-uppercase fw-semibold">Semester</label>
+                            <input type="number" class="form-tech-control form-control" id="courseSemester" name="semester" min="1" max="12" value="5" placeholder="5">
+                        </div>
+                        <div class="col-4">
+                            <label for="courseAcademicYear" class="form-label text-muted fs-xs text-uppercase fw-semibold">Academic Year</label>
+                            <input type="text" class="form-tech-control form-control" id="courseAcademicYear" name="academic_year" value="2026-2027" placeholder="2026-2027">
+                        </div>
+                    </div>
+
+                    {% if session.get('user', {}).get('role') == 'admin' and faculty_list %}
+                    <div class="mb-3">
+                        <label for="courseFaculty" class="form-label text-muted fs-xs text-uppercase fw-semibold">Assigned Faculty</label>
+                        <select class="form-tech-control form-select" id="courseFaculty" name="faculty_id" required>
+                            <option value="" disabled selected>Select faculty member...</option>
+                            {% for fac in faculty_list %}
+                            <option value="{{ fac.faculty_id }}">{{ fac.name }} ({{ fac.faculty_id }})</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    {% endif %}
+
                     <div class="mb-3">
                         <label for="courseDesc" class="form-label text-muted fs-xs text-uppercase fw-semibold">Description (Optional)</label>
                         <textarea class="form-tech-control form-control" id="courseDesc" name="description" rows="3" placeholder="Course objectives, schedule, lab guidelines..."></textarea>

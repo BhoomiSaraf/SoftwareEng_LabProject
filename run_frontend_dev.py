@@ -35,14 +35,26 @@ app.data_provider = data_provider
 # Register Frontend Blueprint
 app.register_blueprint(frontend_bp)
 
-# Embeddings persistence directory
-EMBEDDINGS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
+# Embeddings persistence directory and path configuration
+EMBEDDINGS_DIR = getattr(Config, 'EMBEDDINGS_DIR', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data'))
 os.makedirs(EMBEDDINGS_DIR, exist_ok=True)
-EMBEDDINGS_FILE = os.path.join(EMBEDDINGS_DIR, 'embeddings.npz')
+EMBEDDINGS_FILE = getattr(Config, 'EMBEDDINGS_FILE', os.path.join(EMBEDDINGS_DIR, 'embeddings.npz'))
+
+
+def get_embeddings_path():
+    """Retrieve the authoritative configured embeddings path from app config, data provider, or Config."""
+    return (
+        app.config.get('EMBEDDINGS_FILE')
+        or getattr(getattr(app, 'data_provider', None), 'embeddings_path', None)
+        or getattr(data_provider, 'embeddings_path', None)
+        or EMBEDDINGS_FILE
+    )
+
 
 # Load previously saved biometric embeddings into face_service
-if os.path.exists(EMBEDDINGS_FILE):
-    face_service.load_embeddings(EMBEDDINGS_FILE)
+_init_emb = get_embeddings_path()
+if _init_emb and os.path.exists(_init_emb):
+    face_service.load_embeddings(_init_emb)
 
 
 def get_db_path():
@@ -109,7 +121,8 @@ def resolve_course_record(course_identifier, db_path=None):
     if course:
         return course
 
-    courses = data_provider.get_all_courses()
+    dp = getattr(app, 'data_provider', data_provider)
+    courses = dp.get_all_courses() if (dp and hasattr(dp, 'get_all_courses')) else CourseModel.get_all(db_path=db_path)
     for c in courses:
         if str(c['id']) == c_str or str(c['course_id']) == c_str or str(c['code']).lower() == c_str.lower():
             return CourseModel.get_by_id(c['course_id'], db_path=db_path)
@@ -130,14 +143,6 @@ def api_register_face(student_id):
     if not student:
         return jsonify({'error': 'Student not found'}), 404
 
-    # Unit-testing bypass for test suites sending dummy/truncated base64 strings
-    if app.config.get('TESTING') and len(str(image_data)) < 150:
-        data_provider.set_student_face_registered(student['student_id'], True)
-        return jsonify({
-            'status': 'success',
-            'message': f"Face embeddings computed and linked for {student['name']} ({student['roll_number']})."
-        })
-
     # Real biometric face enrollment via Haar Cascade + MobileNetV3
     res = face_service.register_student_face(student['student_id'], image_data)
     if not res.get('success'):
@@ -152,11 +157,21 @@ def api_register_face(student_id):
     num_id = student['student_id'][3:] if student['student_id'].startswith('STU') and student['student_id'][3:].isdigit() else str(student_id)
     face_service.register_student_face(str(int(num_id)), image_data)
 
-    # Persist numeric embeddings to disk
-    face_service.save_embeddings(EMBEDDINGS_FILE)
+    # Persist numeric embeddings to configured storage path
+    emb_path = get_embeddings_path()
+    save_ok = face_service.save_embeddings(emb_path)
+    if not save_ok or not os.path.exists(emb_path):
+        return jsonify({
+            'status': 'error',
+            'error': 'Storage persistence failure',
+            'message': 'Failed to persist face embedding to configured storage.'
+        }), 500
 
-    # Update SQLite database
-    data_provider.set_student_face_registered(student['student_id'], True)
+    # Update SQLite database only after storage persistence is confirmed
+    StudentModel.set_face_registered(student['student_id'], True, db_path=db_path)
+    dp = getattr(app, 'data_provider', data_provider)
+    if dp:
+        dp.set_student_face_registered(student['student_id'], True)
 
     samples_count = len(face_service._registered_embeddings.get(student['student_id'], []))
 
@@ -315,12 +330,14 @@ def api_recognize(session_id):
         }), 400
 
     # Reload embeddings if registry is empty and saved file exists
-    if not face_service.get_registered_student_ids() and os.path.exists(EMBEDDINGS_FILE):
-        face_service.load_embeddings(EMBEDDINGS_FILE)
+    emb_path = get_embeddings_path()
+    if not face_service.get_registered_student_ids() and emb_path and os.path.exists(emb_path):
+        face_service.load_embeddings(emb_path)
 
     # 2. Perform biometric face matching via Haar Cascade + MobileNetV3
+    rec_threshold = getattr(Config, 'RECOGNITION_THRESHOLD', 0.65)
     try:
-        match_result = face_service.match_face(image, threshold=0.65)
+        match_result = face_service.match_face(image, threshold=rec_threshold)
     except Exception as e:
         logger.exception("Face recognition matching exception")
         return jsonify({'status': 'recognition_error', 'message': 'Face recognition processing failed.'}), 500
@@ -553,23 +570,6 @@ def api_export_csv():
     course_id = request.args.get('course_id', 'all')
     db_path = get_db_path()
 
-    courses = data_provider.get_all_courses()
-    target_course_id = None
-
-    if course_id and course_id != 'all':
-        course = resolve_course_record(course_id, db_path=db_path)
-        if course:
-            target_course_id = course['course_id']
-    elif courses:
-        target_course_id = courses[0]['course_id']
-
-    if not target_course_id:
-        return jsonify({'error': 'No courses found to export'}), 404
-
-    rep = AttendanceService.get_course_attendance_report(target_course_id, db_path=db_path)
-    if 'error' in rep:
-        return jsonify({'error': rep['error']}), 404
-
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow([
@@ -583,26 +583,41 @@ def api_export_csv():
         'Eligibility Status'
     ])
 
-    course_code = rep.get('course', {}).get('course_code', target_course_id) if isinstance(rep.get('course'), dict) else target_course_id
-    total_sessions = rep.get('total_sessions_held', 0)
+    if course_id and course_id != 'all':
+        course = resolve_course_record(course_id, db_path=db_path)
+        if not course:
+            return jsonify({'error': f"Course '{course_id}' not found"}), 404
+        target_courses = [course]
+        filename = f"attendance_report_{course['course_code']}.csv"
+    else:
+        dp = getattr(app, 'data_provider', data_provider)
+        courses = dp.get_all_courses() if (dp and hasattr(dp, 'get_all_courses')) else CourseModel.get_all(db_path=db_path)
+        target_courses = [resolve_course_record(c['course_id'], db_path=db_path) for c in courses]
+        target_courses = [c for c in target_courses if c]
+        filename = "attendance_report_all.csv"
 
-    for sr in rep.get('student_reports', []):
-        writer.writerow([
-            sr['roll_number'],
-            sr['name'],
-            sr['email'],
-            course_code,
-            total_sessions,
-            sr['attended_sessions'],
-            f"{sr['attendance_percentage']}%",
-            'Low Attendance Warning' if sr['low_attendance_warning'] else 'Eligible'
-        ])
+    for crs in target_courses:
+        rep = AttendanceService.get_course_attendance_report(crs['course_id'], db_path=db_path)
+        if 'student_reports' in rep:
+            course_code = crs.get('course_code') or crs['course_id']
+            total_sessions = rep.get('total_sessions_held', 0)
+            for sr in rep.get('student_reports', []):
+                writer.writerow([
+                    sr['roll_number'],
+                    sr['name'],
+                    sr['email'],
+                    course_code,
+                    total_sessions,
+                    sr['attended_sessions'],
+                    f"{sr['attendance_percentage']}%",
+                    'Low Attendance Warning' if sr['low_attendance_warning'] else 'Eligible'
+                ])
 
     output.seek(0)
     return Response(
         output.getvalue(),
         mimetype='text/csv',
-        headers={'Content-Disposition': f'attachment; filename=attendance_report_{target_course_id}.csv'}
+        headers={'Content-Disposition': f'attachment; filename={filename}'}
     )
 
 

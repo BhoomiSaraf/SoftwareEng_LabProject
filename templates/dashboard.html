@@ -27,7 +27,7 @@
             <div class="d-flex justify-content-between align-items-start">
                 <div>
                     <span class="text-muted fs-xs text-uppercase fw-semibold tracking-wider d-block mb-1">Active Sessions</span>
-                    <h3 class="fw-bold text-white mb-0" id="statActiveSessions">{{ stats.active_sessions if stats else 1 }}</h3>
+                    <h3 class="fw-bold text-white mb-0" id="statActiveSessions">{{ stats.active_sessions if (stats and stats.active_sessions is defined) else 0 }}</h3>
                     <span class="badge bg-success-subtle text-success border border-success-subtle rounded-pill fs-xxs mt-2">
                         <i class="bi bi-broadcast me-1"></i> Live Scanning
                     </span>
@@ -44,7 +44,7 @@
             <div class="d-flex justify-content-between align-items-start">
                 <div>
                     <span class="text-muted fs-xs text-uppercase fw-semibold tracking-wider d-block mb-1">Total Students</span>
-                    <h3 class="fw-bold text-white mb-0" id="statTotalStudents">{{ stats.total_students if stats else 24 }}</h3>
+                    <h3 class="fw-bold text-white mb-0" id="statTotalStudents">{{ stats.total_students if (stats and stats.total_students is defined) else 0 }}</h3>
                     <span class="badge bg-info-subtle text-info border border-info-subtle rounded-pill fs-xxs mt-2">
                         <i class="bi bi-person-check-fill me-1"></i> Face Enrolled
                     </span>
@@ -61,9 +61,9 @@
             <div class="d-flex justify-content-between align-items-start">
                 <div>
                     <span class="text-muted fs-xs text-uppercase fw-semibold tracking-wider d-block mb-1">Courses Managed</span>
-                    <h3 class="fw-bold text-white mb-0" id="statTotalCourses">{{ stats.total_courses if stats else 3 }}</h3>
+                    <h3 class="fw-bold text-white mb-0" id="statTotalCourses">{{ stats.total_courses if (stats and stats.total_courses is defined) else 0 }}</h3>
                     <span class="badge bg-primary-subtle text-primary border border-primary-subtle rounded-pill fs-xxs mt-2">
-                        SE Lab, ML, OS
+                        Active Curriculum
                     </span>
                 </div>
                 <div class="stat-card-icon bg-success-soft text-success">
@@ -78,7 +78,7 @@
             <div class="d-flex justify-content-between align-items-start">
                 <div>
                     <span class="text-muted fs-xs text-uppercase fw-semibold tracking-wider d-block mb-1">Avg Attendance Rate</span>
-                    <h3 class="fw-bold text-white mb-0" id="statAvgAttendance">{{ stats.avg_attendance if stats else '88.5%' }}</h3>
+                    <h3 class="fw-bold text-white mb-0" id="statAvgAttendance">{{ stats.avg_attendance if (stats and stats.avg_attendance is defined) else '0.0%' }}</h3>
                     <span class="badge bg-warning-subtle text-warning border border-warning-subtle rounded-pill fs-xxs mt-2">
                         <i class="bi bi-graph-up-arrow me-1"></i> Lab Threshold &gt; 75%
                     </span>
@@ -238,9 +238,7 @@
                                 <option value="{{ course.id }}">{{ course.code }} - {{ course.name }} ({{ course.enrolled_count }} enrolled)</option>
                                 {% endfor %}
                             {% else %}
-                                <option value="1">CS301 - Software Engineering Lab (24 students)</option>
-                                <option value="2">CS304 - Machine Learning (18 students)</option>
-                                <option value="3">CS306 - Operating Systems (22 students)</option>
+                                <option value="" disabled selected>No courses created yet</option>
                             {% endif %}
                         </select>
                     </div>
